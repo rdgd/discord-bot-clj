@@ -1,0 +1,7 @@
+bot.edn
+**/*.swp
+**/*.swo
+.nrepl-port
+.cpcache/*
+impl/*
+config.edn
