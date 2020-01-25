@@ -3,5 +3,6 @@ bot.edn
 **/*.swo
 .nrepl-port
 .cpcache/*
+src/.cpcache/*
 impl/*
 config.edn
