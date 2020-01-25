@@ -56,6 +56,7 @@
   []
   (let [payload (json/generate-string {:op 1
                                        :d (or (:last-event-index @session) 0)})]
+    (println "Calling Discord heartbeat")
     (ws/send-msg @ws-connection payload)))
 
 (defn get-ws-connection
@@ -107,14 +108,20 @@
   (callback data)
   (swap! server-state (fn [s] (update s :channels (fn [c] (conj c data))))))
 
+(defn handle-message-update
+  [data & [callback]]
+  (println "Message updated: " data)
+  (when callback (callback data)))
+
 (defn receive-event
   [{data :d event-name :t event-index :s}
-   {:keys [on-message-create on-presence-update on-typing-start on-channel-create]}]
+   {:keys [on-message-create on-presence-update on-typing-start on-channel-create on-message-update]}]
   (println "Received event: " event-name)
   (case event-name
     "READY" (reset! session data)
     "GUILD_CREATE" (reset! server-state data)
     "MESSAGE_CREATE" (handle-message-create data on-message-create)
+    "MESSAGE_UPDATE" (handle-message-update data on-message-update)
     "PRESENCE_UPDATE" (handle-presence-update data on-presence-update)
     "TYPING_START" (handle-typing-start data on-typing-start)
     "CHANNEL_CREATE" (handle-channel-create data on-channel-create)
