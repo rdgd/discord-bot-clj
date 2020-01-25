@@ -1,0 +1,7 @@
+{:deps  {clj-http  {:mvn/version "3.10.0"}
+         stylefruits/gniazdo  {:mvn/version  "1.1.2"}
+         org.clojure/core.memoize  {:mvn/version "0.8.2"}
+         cheshire {:mvn/version "5.9.0"}}
+ :paths ["src" "classes" "impl"]
+ :aliases {:nrepl  {:extra-deps  {nrepl  {:mvn/version  "RELEASE"}}
+                    :main-opts  ["-m"  "nrepl.cmdline"]}}}
