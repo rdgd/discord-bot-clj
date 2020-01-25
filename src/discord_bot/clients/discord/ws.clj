@@ -149,7 +149,7 @@
     (reset! ws-connection (ws/connect (get-config [:ws-url])
                                       :on-connect  (partial on-connect resume?)
                                       :on-close (fn [code reason]
-                                                  (kill-ws (str "beacuse of on-close " code reason) (partial initialize true)))
+                                                  (kill-ws (str "beacuse of on-close " code reason) (partial initialize opts)))
                                       :on-error on-error
                                       :on-receive #(handle-message % opts)))
     (println "Tried to initialize a session, but a valid session already exists. Try resuming the session or clear your current session if you want to start a new one.")))
