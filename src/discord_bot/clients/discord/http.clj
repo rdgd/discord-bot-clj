@@ -23,11 +23,11 @@
           channels))
 
 (defn send-channel-message
-  [channel-id message]
+  [channel-id params]
   (-> (http/post (str (get-config [:url]) "channels/" channel-id "/messages")
                  {:headers (mk-headers)
                   :content-type :json
-                  :form-params {:content message}})))
+                  :form-params params})))
 
 (defn get-channels
   [server-id]
