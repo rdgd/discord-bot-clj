@@ -13,4 +13,4 @@
 (defn get-config
   [path]
   (get-in (merge (bot-config) {:url url
-                             :ws-url ws-url}) path))
+                               :ws-url ws-url}) path))
