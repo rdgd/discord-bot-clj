@@ -192,8 +192,11 @@
                                       :on-close (fn [code reason]
                                                   (kill-ws (str "beacuse of on-close " code reason)
                                                            (fn []
-                                                             (when (> code 1001)
-                                                               (initialize (merge opts {:resume? true})))))) ;used to be (kill-ws (str "beacuse of on-close " code reason) (partial initialize opts))
+                                                             (cond
+                                                               (<= code 1001) (initialize opts)
+                                                               (>= code 4000) (initialize opts)
+                                                               (and (> code 1001) (< code 4000)) (initialize (merge opts {:resume? true}))
+                                                               :else (initialize opts))))) ;used to be (kill-ws (str "beacuse of on-close " code reason) (partial initialize opts))
                                       :on-error on-error
                                       :on-receive #(handle-message % opts)))))
 
