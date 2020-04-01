@@ -9,7 +9,6 @@
 (def server-state (atom nil))
 (def heartbeat-timer (atom nil))
 (def the-opts (atom nil))
-(def already-resumed? (atom false))
 
 (defn ws-send
   [payload]
@@ -30,7 +29,6 @@
 (defn resume-session
   [{:keys [session_id last-event-index]}]
   (println "Sending resume payload" session_id last-event-index)
-  (reset! already-resumed? true)
   (ws-send {:op "6"
             :d {:token (get-config [:token])
                 :session_id session_id
@@ -40,34 +38,17 @@
   []
   (ws-send identify-payload))
 
-(defn kill-ws
-  [reason & [callback]]
-  (println "kill-ws - Killing and cleaning up WS connection for reason")
-  (println "kill-ws - Reason for stopping: " reason)
-  (do
-    (println "Cancelling the heartbeat-timer future, stored in an atom")
-    (println "Current value: " @heartbeat-timer)
-    (when (future? @heartbeat-timer)
-      (future-cancel @heartbeat-timer))
-    (println "Value after cancel: " @heartbeat-timer)
-    ;(reset! ws-connection (ws/close @ws-connection))
-    (when callback
-      (println "kill-ws - Kill WS callback detected, invoking callback")
-      (callback))))
-
 (defn on-connect  [resume? & [ws]]
   (println "**** CALLED ON-CONNECT ****")
-  (println "Resume value: " resume?)
-  (println "WS (arg) value: " ws)
-  (println "WS Connection atom (issue): " @ws-connection)
   (println (if resume?
              "Connected to WS, and attempting to resume session"
              "Connected to WS and attempting to identify"))
   (if resume?
-    (when-not @already-resumed? (resume-session @session))
+    (resume-session @session)
     (identify)))
 
 (defn on-error  [e]
+  (println "on-error handler called")
   (println "ERROR: " e))
 
 (defn call-heartbeat
@@ -183,33 +164,33 @@
       11 true
       (println "Received unrecognized WS message code from Discord: " code))))
 
-(defn initialize [& [{:keys [resume?] :as opts}]]
+(defn reset-state!
+  []
+  (reset! ws-connection nil)
+  (println "WS Connection reset to nil")
+  (println "Checking if heartbeat-timer is a future")
+  (when (future? @heartbeat-timer)
+      (println "Heartbeat timer is a future")
+      (future-cancel @heartbeat-timer)
+      (println "Heartbeat timer future cancelled"))
+  (println "Resetting heartbeat timer to nil")
+  (reset! heartbeat-timer nil)
+  (println "Heartbeat timer reset"))
+
+(defn initialize [& [opts resume?]]
   (println "Intializing WS session with Discord servers")
+  (reset-state!)
   (reset! the-opts opts)
-  (when-not @already-resumed?
-    (reset! ws-connection (ws/connect (get-config [:ws-url])
-                                      :on-connect  (partial on-connect resume?)
-                                      :on-close (fn [code reason]
-                                                  (kill-ws (str "beacuse of on-close " code reason)
-                                                           (fn []
-                                                             (cond
-                                                               (<= code 1001) (initialize opts)
-                                                               (>= code 4000) (initialize opts)
-                                                               (and (> code 1001) (< code 4000)) (initialize (merge opts {:resume? true}))
-                                                               :else (initialize opts))))) ;used to be (kill-ws (str "beacuse of on-close " code reason) (partial initialize opts))
-                                      :on-error on-error
-                                      :on-receive #(handle-message % opts)))))
+  (reset! ws-connection (ws/connect (get-config [:ws-url])
+                                    :on-connect (partial on-connect resume?)
+                                    :on-close (fn [code reason]
+                                                (println "WS session terminated with code: " code " For reason: " reason)
+                                                (initialize opts)) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
+                                    :on-error on-error
+                                    :on-receive #(handle-message % opts))))
 
 (comment
   (ws/close @ws-connection)
-  (println (:last-event-index @session))
-  (reset! ws-connection (ws/close @ws-connection))
   (println @ws-connection)
-  (def session-id (:session_id @session))
-  (println session-id)
-  (kill-ws "manually triggered")
   (initialize @the-opts)
-  (initialize {:resume? true})
-  (identify)
-  (ws/send-msg @ws-connection identify-payload))
-
+  (initialize @the-opts true))
