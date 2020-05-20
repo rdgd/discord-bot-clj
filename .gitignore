@@ -1,4 +1,5 @@
 bot.edn
+target/*
 **/*.swp
 **/*.swo
 .nrepl-port
