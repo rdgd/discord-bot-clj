@@ -154,6 +154,15 @@
                                                   last-event-index)
                                                 0)))))
 
+(defn handle-message  [msg opts]
+  (let [{code :op data :d :as full-msg} (json/parse-string msg true)]
+    (println "Received WS message from Discord: " full-msg)
+    (case code
+      0 (receive-event full-msg opts)
+      1 (call-heartbeat)
+      10 (start-heartbeat (:heartbeat_interval data))
+      11 true
+      (println "Received unrecognized WS message code from Discord: " code))))
 
 (defn reset-state!
   []
@@ -172,23 +181,13 @@
   (println "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
-  (let [handle-message  (fn [msg opts]
-                          (let [{code :op data :d :as full-msg} (json/parse-string msg true)]
-                            (println "Received WS message from Discord: " full-msg)
-                            (case code
-                              0 (receive-event full-msg opts)
-                              1 (call-heartbeat)
-                              7 (initialize opts)
-                              10 (start-heartbeat (:heartbeat_interval data))
-                              11 true
-                              (println "Received unrecognized WS message code from Discord: " code))))]
-    (reset! ws-connection (ws/connect (get-config [:ws-url])
-                                      :on-connect (partial on-connect resume?)
-                                      :on-close (fn [code reason]
-                                                  (println "WS session terminated with code: " code " For reason: " reason)
-                                                  (initialize opts)) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
-                                      :on-error  on-error
-                                      :on-receive #(handle-message % opts)))))
+  (reset! ws-connection (ws/connect (get-config [:ws-url])
+                                    :on-connect (partial on-connect resume?)
+                                    :on-close (fn [code reason]
+                                                (println "WS session terminated with code: " code " For reason: " reason)
+                                                (initialize opts)) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
+                                    :on-error on-error
+                                    :on-receive #(handle-message % opts))))
 
 (comment
   (ws/close @ws-connection)
