@@ -3,5 +3,11 @@
          org.clojure/core.memoize  {:mvn/version "0.8.2"}
          cheshire {:mvn/version "5.9.0"}}
  :paths ["src" "classes" "impl"]
- :aliases {:nrepl  {:extra-deps  {nrepl  {:mvn/version  "RELEASE"}}
+ :aliases {:jar  {:extra-deps  {seancorfield/depstar  {:mvn/version  "RELEASE"}}
+                  :main-opts  ["-m"  "hf.depstar.jar"]}
+           :install  {:extra-deps  {deps-deploy  {:mvn/version  "RELEASE"}}
+                      :main-opts  ["-m"  "deps-deploy.deps-deploy"  "install"]}
+           :deploy  {:extra-deps  {deps-deploy  {:mvn/version  "RELEASE"}}
+                     :main-opts  ["-m"  "deps-deploy.deps-deploy"  "deploy"]}
+           :nrepl  {:extra-deps  {nrepl  {:mvn/version  "RELEASE"}}
                     :main-opts  ["-m"  "nrepl.cmdline"]}}}
