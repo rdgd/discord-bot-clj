@@ -166,8 +166,6 @@
 
 (defn reset-state!
   []
-  (reset! ws-connection nil)
-  (println "WS Connection reset to nil")
   (println "Checking if heartbeat-timer is a future")
   (when (future? @heartbeat-timer)
       (println "Heartbeat timer is a future")
