@@ -52,9 +52,8 @@
   (println (if resume?
              "Connected to WS, and attempting to resume session"
              "Connected to WS and attempting to identify"))
-  (if resume?
-    (resume-session)
-    (identify)))
+  (identify)
+  (when resume? (resume-session)))
 
 (defn on-error  [e]
   (println "on-error handler called")
@@ -174,7 +173,9 @@
     (case code
       0 (receive-event full-msg opts)
       1 (println "received heartbeat from discord") ;;(call-heartbeat)
-      7 (do (println "was asked to reconnect!") (resume-session)) ;;reconnect
+      7 (do (println "was asked to reconnect!")
+            (close-connection)
+            (initialize @the-opts true)) ;;reconnect
       9 (do (println "was told the session is invalid!") (initialize @the-opts)) ;;invalid session
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
