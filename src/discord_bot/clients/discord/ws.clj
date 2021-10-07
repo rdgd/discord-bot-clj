@@ -4,10 +4,12 @@
             [discord-bot.config :refer [get-config] :as config]
             [discord-bot.clients.discord.http :as dc]))
 
+(declare initialize)
 (def ws-connection (atom nil))
 (def session (atom nil))
 (def server-state (atom nil))
 (def heartbeat-timer (atom nil))
+(def heartbeat-semafor (atom 0))
 (def the-opts (atom nil))
 
 (defn ws-send
@@ -26,13 +28,20 @@
                     "$browser" (get-config [:project-name])
                     "$device" "remote-discord-bot-server"}}})
 
+(defn close-connection
+  []
+  (ws/close @ws-connection))
+
+
 (defn resume-session
-  [{:keys [session_id last-event-index]}]
-  (println "Sending resume payload" session_id last-event-index)
-  (ws-send {:op "6"
-            :d {:token (get-config [:token])
-                :session_id session_id
-                :seq (or last-event-index 0)}}))
+  []
+  (let [{:keys [session_id last-event-index]} @session]
+    
+    (println "Sending resume payload" session_id last-event-index)
+    (ws-send {:op "6"
+              :d {:token (get-config [:token])
+                  :session_id session_id
+                  :seq (or last-event-index 0)}})))
 
 (defn identify
   []
@@ -44,7 +53,7 @@
              "Connected to WS, and attempting to resume session"
              "Connected to WS and attempting to identify"))
   (if resume?
-    (resume-session @session)
+    (resume-session)
     (identify)))
 
 (defn on-error  [e]
@@ -53,10 +62,14 @@
 
 (defn call-heartbeat
   []
-  (let [payload {:op 1
-                 :d (or (:last-event-index @session) 0)}]
-    (println "Calling Discord heartbeat")
-    (ws-send payload)))
+  (if (= @heartbeat-semafor 0)
+    (let [payload {:op 1
+                   :d (or (:last-event-index @session) 0)}]
+      (println "Calling Discord heartbeat")
+      (reset! heartbeat-semafor 1)
+      (ws-send payload))
+    (do (close-connection)
+        (initialize @the-opts))))
 
 (defn get-ws-connection
   []
@@ -66,6 +79,7 @@
   [interval]
   (when (future? @heartbeat-timer)
     (future-cancel @heartbeat-timer))
+  (reset! heartbeat-semafor 0)
   (reset! heartbeat-timer
           (future
             (loop []
@@ -159,9 +173,11 @@
     (println "Received WS message from Discord: " full-msg)
     (case code
       0 (receive-event full-msg opts)
-      1 (call-heartbeat)
+      1 (println "received heartbeat from discord") ;;(call-heartbeat)
+      7 (do (println "was asked to reconnect!") (resume-session)) ;;reconnect
+      9 (do (println "was told the session is invalid!") (initialize @the-opts)) ;;invalid session
       10 (start-heartbeat (:heartbeat_interval data))
-      11 true
+      11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
       (println "Received unrecognized WS message code from Discord: " code))))
 
 (defn reset-state!
@@ -171,6 +187,7 @@
       (println "Heartbeat timer is a future")
       (future-cancel @heartbeat-timer)
       (println "Heartbeat timer future cancelled"))
+  (reset! heartbeat-semafor 0)
   (println "Resetting heartbeat timer to nil")
   (reset! heartbeat-timer nil)
   (println "Heartbeat timer reset"))
@@ -183,7 +200,8 @@
                                     :on-connect (partial on-connect resume?)
                                     :on-close (fn [code reason]
                                                 (println "WS session terminated with code: " code " For reason: " reason)
-                                                (initialize opts)) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
+                                                (reset-state!)
+                                                #_(initialize opts)) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
                                     :on-error on-error
                                     :on-receive #(handle-message % opts))))
 

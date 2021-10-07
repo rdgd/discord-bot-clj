@@ -19,3 +19,4 @@
 ; CHANNELS
 (def get-channels http/get-channels)
 (def send-channel-message http/send-channel-message)
+(def close-connection ws/close-connection)
