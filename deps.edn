@@ -7,7 +7,10 @@
                   :main-opts  ["-m"  "hf.depstar.jar"]}
            :install  {:extra-deps  {deps-deploy  {:mvn/version  "RELEASE"}}
                       :main-opts  ["-m"  "deps-deploy.deps-deploy"  "install"]}
-           :deploy  {:extra-deps  {deps-deploy  {:mvn/version  "RELEASE"}}
-                     :main-opts  ["-m"  "deps-deploy.deps-deploy"  "deploy"]}
+           :deploy {:extra-deps  {slipset/deps-deploy  {:mvn/version  "RELEASE"}}
+                    :exec-fn deps-deploy.deps-deploy/deploy
+                    :exec-args  {:installer :remote
+                                 :sign-releases? false 
+                                 :artifact  "discord-bot.jar"}} 
            :nrepl  {:extra-deps  {nrepl  {:mvn/version  "RELEASE"}}
                     :main-opts  ["-m"  "nrepl.cmdline"]}}}
