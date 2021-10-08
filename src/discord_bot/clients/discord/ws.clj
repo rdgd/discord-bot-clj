@@ -11,6 +11,7 @@
 (def heartbeat-timer (atom nil))
 (def heartbeat-semafor (atom 0))
 (def the-opts (atom nil))
+(def intentionally-disconnected (atom false))
 
 (defn ws-send
   [payload]
@@ -67,8 +68,10 @@
       (println "Calling Discord heartbeat")
       (reset! heartbeat-semafor 1)
       (ws-send payload))
-    (do (close-connection)
-        (initialize @the-opts))))
+    (do 
+      (reset! intentionally-disconnected true)
+      (close-connection)
+      (initialize @the-opts))))
 
 (defn get-ws-connection
   []
@@ -174,6 +177,7 @@
       0 (receive-event full-msg opts)
       1 (println "received heartbeat from discord") ;;(call-heartbeat)
       7 (do (println "was asked to reconnect!")
+            (reset! intentionally-disconnected true)
             (close-connection)
             (initialize @the-opts true)) ;;reconnect
       9 (do (println "was told the session is invalid!") (initialize @the-opts)) ;;invalid session
@@ -201,8 +205,11 @@
                                     :on-connect (partial on-connect resume?)
                                     :on-close (fn [code reason]
                                                 (println "WS session terminated with code: " code " For reason: " reason)
+                                                (println "Intentionally disconnected? " @intentionally-disconnected)
                                                 (reset-state!)
-                                                #_(initialize opts)) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
+                                                (when-not @intentionally-disconnected
+                                                  (reset! @intentionally-disconnected false)
+                                                  (initialize opts true))) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
                                     :on-error on-error
                                     :on-receive #(handle-message % opts))))
 
