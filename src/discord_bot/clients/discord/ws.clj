@@ -208,7 +208,7 @@
                                                 (println "Intentionally disconnected? " @intentionally-disconnected)
                                                 (reset-state!)
                                                 (when-not @intentionally-disconnected
-                                                  (reset! @intentionally-disconnected false)
+                                                  (reset! intentionally-disconnected false)
                                                   (initialize opts true))) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
                                     :on-error on-error
                                     :on-receive #(handle-message % opts))))
