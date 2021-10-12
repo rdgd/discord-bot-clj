@@ -1,12 +1,13 @@
 (ns discord-bot.config
-  (:require [clojure.core.memoize :as memo]))
+  (:require [clojure.core.memoize :as memo]
+            [clojure.edn :as edn]))
 
 (defonce url "https://discordapp.com/api/")
 (defonce ws-url "wss://gateway.discord.gg/?v=6&encoding=json")
 
 (defn bot-config*
   []
-  (clojure.edn/read-string (slurp "./bot.edn")))
+  (edn/read-string (slurp "./bot.edn")))
 
 (def bot-config (memo/ttl bot-config* :ttl/threshold (* 10 1000)))
 

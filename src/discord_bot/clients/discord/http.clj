@@ -1,12 +1,12 @@
 (ns discord-bot.clients.discord.http
-  (:require [clj-http.client :as http]
-            [cheshire.core :as json]
-            [discord-bot.config :refer [get-config] :as config]))
+  (:require [cheshire.core] ;; Cheshire needs to be on the classpath for clj-http auto coercion
+            [clj-http.client :as http]
+            [discord-bot.config :refer [get-config]]))
 
 (defn mk-headers
   []
   {"Authorization" (str "Bot " (get-config [:token]))
-   "User-Agent" (str (get-config [:project-name]) " " (get-config [:project-version]))})
+   "User-Agent"    (str (get-config [:project-name]) " " (get-config [:project-version]))})
 
 (defn parse-channels
   [channels]
@@ -24,10 +24,10 @@
 
 (defn send-channel-message
   [channel-id params]
-  (-> (http/post (str (get-config [:url]) "channels/" channel-id "/messages")
-                 {:headers (mk-headers)
-                  :content-type :json
-                  :form-params params})))
+  (http/post (str (get-config [:url]) "channels/" channel-id "/messages")
+             {:headers      (mk-headers)
+              :content-type :json
+              :form-params  params}))
 
 (defn get-channels
   [server-id]

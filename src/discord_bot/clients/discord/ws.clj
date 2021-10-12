@@ -1,8 +1,8 @@
 (ns discord-bot.clients.discord.ws
-  (:require [gniazdo.core :as ws]
-            [cheshire.core :as json]
-            [discord-bot.config :refer [get-config] :as config]
-            [discord-bot.clients.discord.http :as dc]))
+  (:require [cheshire.core :as json]
+            [clojure.tools.logging :as log]
+            [discord-bot.config :refer [get-config]]
+            [gniazdo.core :as ws]))
 
 (declare initialize)
 (def ws-connection (atom nil))
@@ -15,7 +15,7 @@
 
 (defn ws-send
   [payload]
-  (println "SENDING WS PAYLOAD: " payload)
+  (log/info "SENDING WS PAYLOAD: " payload)
   (ws/send-msg @ws-connection (json/generate-string payload)))
 
 (defn get-presences
@@ -37,8 +37,7 @@
 (defn resume-session
   []
   (let [{:keys [session_id last-event-index]} @session]
-    
-    (println "Sending resume payload" session_id last-event-index)
+    (log/info "Sending resume payload" session_id last-event-index)
     (ws-send {:op "6"
               :d {:token (get-config [:token])
                   :session_id session_id
@@ -48,27 +47,27 @@
   []
   (ws-send identify-payload))
 
-(defn on-connect  [resume? & [ws]]
-  (println "**** CALLED ON-CONNECT ****")
-  (println (if resume?
+(defn on-connect  [resume? & _]
+  (log/info "**** CALLED ON-CONNECT ****")
+  (log/info (if resume?
              "Connected to WS, and attempting to resume session"
              "Connected to WS and attempting to identify"))
   (identify)
   (when resume? (resume-session)))
 
 (defn on-error  [e]
-  (println "on-error handler called")
-  (println "ERROR: " e))
+  (log/info "on-error handler called")
+  (log/error "ERROR: " e))
 
 (defn call-heartbeat
   []
   (if (= @heartbeat-semafor 0)
     (let [payload {:op 1
                    :d (or (:last-event-index @session) 0)}]
-      (println "Calling Discord heartbeat")
+      (log/info "Calling Discord heartbeat")
       (reset! heartbeat-semafor 1)
       (ws-send payload))
-    (do 
+    (do
       (reset! intentionally-disconnected true)
       (close-connection)
       (initialize @the-opts))))
@@ -98,28 +97,29 @@
         (:members @server-state)))
 
 (defn handle-presence-update
-  [{:keys [presences] :as data} & [callback]]
+  [data & [callback]]
   (when callback (callback data))
   (let [user-id (get-in data [:user :id])]
     (swap! server-state (fn [s]
-                          (update s :presences (fn [presences] (map (fn [presence]
-                                                                      (if (= user-id (get-in presence [:user :id]))
-                                                                        data
-                                                                        presence)) presences)))))))
+                          (update s :presences (fn [presences]
+                                                 (map (fn [presence]
+                                                        (if (= user-id (get-in presence [:user :id]))
+                                                          data
+                                                          presence)) presences)))))))
 
 (defn handle-message-create
   [data & [callback]]
-  (println "Message created: " data)
+  (log/info "Message created: " data)
   (when callback (callback data)))
 
 (defn handle-typing-start
   [data & [callback]]
-  (println "Typing started: " data)
+  (log/info "Typing started: " data)
   (when callback (callback data)))
 
 (defn handle-default
   [data & [callback]]
-  (println "default event handler: " data)
+  (log/info "default event handler: " data)
   (when callback (callback data)))
 
 (defn started-new-game?
@@ -133,11 +133,11 @@
 
 (defn handle-message-update
   [data & [callback]]
-  (println "Message updated: " data)
+  (log/info "Message updated: " data)
   (when callback (callback data)))
 
 (defn handle-session-resumed [data]
-  (println "*** DISCORD WS SESSION RESUMED SUCCESSFULLY *** data: " data))
+  (log/info "*** DISCORD WS SESSION RESUMED SUCCESSFULLY *** data: " data))
 
 (defn receive-event
   [{data :d event-name :t event-index :s}
@@ -149,7 +149,7 @@
            on-guild-member-update
            on-guild-member-remove
            on-guild-role-delete]}]
-  (println "Received event: " event-name)
+  (log/info "Received event: " event-name)
   (case event-name
     "READY" (reset! session data)
     "RESUMED" (handle-session-resumed data)
@@ -162,7 +162,7 @@
     "GUILD_MEMBER_UPDATE" (handle-default data on-guild-member-update)
     "GUILD_MEMBER_REMOVE" (handle-default data on-guild-member-remove)
     "GUILD_ROLE_DELETE" (handle-default data on-guild-role-delete)
-    (println "Received an unknown event name " event-name ". Full event data: " data))
+    (log/warn "Received an unknown event name " event-name ". Full event data: " data))
   (swap! session (fn [{:keys [last-event-index] :as s}]
                    (assoc s :last-event-index (if last-event-index
                                                 (if (> event-index last-event-index)
@@ -172,40 +172,40 @@
 
 (defn handle-message  [msg opts]
   (let [{code :op data :d :as full-msg} (json/parse-string msg true)]
-    (println "Received WS message from Discord: " full-msg)
+    (log/info "Received WS message from Discord: " full-msg)
     (case code
       0 (receive-event full-msg opts)
-      1 (println "received heartbeat from discord") ;;(call-heartbeat)
-      7 (do (println "was asked to reconnect!")
+      1 (log/info "received heartbeat from discord") ;;(call-heartbeat)
+      7 (do (log/info "was asked to reconnect!")
             (reset! intentionally-disconnected true)
             (close-connection)
             (initialize @the-opts true)) ;;reconnect
-      9 (do (println "was told the session is invalid!") (initialize @the-opts)) ;;invalid session
+      9 (do (log/info "was told the session is invalid!") (initialize @the-opts)) ;;invalid session
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
-      (println "Received unrecognized WS message code from Discord: " code))))
+      (log/warn "Received unrecognized WS message code from Discord: " code))))
 
 (defn reset-state!
   []
-  (println "Checking if heartbeat-timer is a future")
+  (log/info "Checking if heartbeat-timer is a future")
   (when (future? @heartbeat-timer)
-      (println "Heartbeat timer is a future")
+      (log/info "Heartbeat timer is a future")
       (future-cancel @heartbeat-timer)
-      (println "Heartbeat timer future cancelled"))
+      (log/info "Heartbeat timer future cancelled"))
   (reset! heartbeat-semafor 0)
-  (println "Resetting heartbeat timer to nil")
+  (log/info "Resetting heartbeat timer to nil")
   (reset! heartbeat-timer nil)
-  (println "Heartbeat timer reset"))
+  (log/info "Heartbeat timer reset"))
 
 (defn initialize [& [opts resume?]]
-  (println "Intializing WS session with Discord servers")
+  (log/info "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
   (reset! ws-connection (ws/connect (get-config [:ws-url])
                                     :on-connect (partial on-connect resume?)
                                     :on-close (fn [code reason]
-                                                (println "WS session terminated with code: " code " For reason: " reason)
-                                                (println "Intentionally disconnected? " @intentionally-disconnected)
+                                                (log/info "WS session terminated with code: " code " For reason: " reason)
+                                                (log/info "Intentionally disconnected? " @intentionally-disconnected)
                                                 (reset-state!)
                                                 (when-not @intentionally-disconnected
                                                   (reset! intentionally-disconnected false)
