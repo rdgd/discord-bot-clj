@@ -214,6 +214,7 @@
                                     :on-receive #(handle-message % opts))))
 (defn stop
   []
+  (reset! intentionally-disconnected true)
   (ws/close @ws-connection))
 
 
