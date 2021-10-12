@@ -1,16 +1,17 @@
-{:deps  {clj-http  {:mvn/version "3.10.0"}
-         stylefruits/gniazdo  {:mvn/version  "1.1.2"}
-         org.clojure/core.memoize  {:mvn/version "0.8.2"}
-         cheshire {:mvn/version "5.9.0"}}
- :paths ["src" "classes" "impl"]
- :aliases {:jar  {:extra-deps  {seancorfield/depstar  {:mvn/version  "RELEASE"}}
-                  :main-opts  ["-m"  "hf.depstar.jar"]}
-           :install  {:extra-deps  {deps-deploy  {:mvn/version  "RELEASE"}}
-                      :main-opts  ["-m"  "deps-deploy.deps-deploy"  "install"]}
-           :deploy {:extra-deps  {slipset/deps-deploy  {:mvn/version  "RELEASE"}}
-                    :exec-fn deps-deploy.deps-deploy/deploy
-                    :exec-args  {:installer :remote
-                                 :sign-releases? false 
-                                 :artifact  "discord-bot.jar"}} 
-           :nrepl  {:extra-deps  {nrepl  {:mvn/version  "RELEASE"}}
-                    :main-opts  ["-m"  "nrepl.cmdline"]}}}
+{:deps    {cheshire/cheshire        {:mvn/version "5.9.0"}
+           clj-http/clj-http        {:mvn/version "3.10.0"}
+           org.clojure/core.memoize {:mvn/version "0.8.2"}
+           org.clojure/tools.logging {:mvn/version "1.1.0"}
+           stylefruits/gniazdo      {:mvn/version "1.1.2"}}
+ :paths   ["src" "classes" "impl"]
+ :aliases {:jar     {:extra-deps {seancorfield/depstar {:mvn/version "RELEASE"}}
+                     :main-opts  ["-m"  "hf.depstar.jar"]}
+           :install {:extra-deps {slipset/deps-deploy {:mvn/version "RELEASE"}}
+                     :main-opts  ["-m"  "deps-deploy.deps-deploy"  "install"]}
+           :deploy  {:extra-deps {slipset/deps-deploy {:mvn/version "RELEASE"}}
+                     :exec-fn    deps-deploy.deps-deploy/deploy
+                     :exec-args  {:installer      :remote
+                                  :sign-releases? false
+                                  :artifact       "discord-bot.jar"}}
+           :nrepl   {:extra-deps {nrepl {:mvn/version "RELEASE"}}
+                     :main-opts  ["-m"  "nrepl.cmdline"]}}}

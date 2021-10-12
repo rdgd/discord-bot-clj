@@ -4,6 +4,7 @@
 
 ; WEBSOCKETS AND INITIALIZATION
 (def init ws/initialize)
+(def stop ws/stop)
 
 ; UTILITY
 (defn get-presences
@@ -15,7 +16,7 @@
 (defn server-state
   []
   ws/server-state)
-;(get-presences)
+
 ; CHANNELS
 (def get-channels http/get-channels)
 (def send-channel-message http/send-channel-message)
