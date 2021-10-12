@@ -4,6 +4,7 @@
 
 ; WEBSOCKETS AND INITIALIZATION
 (def init ws/initialize)
+(def stop ws/stop)
 
 ; UTILITY
 (defn get-presences
