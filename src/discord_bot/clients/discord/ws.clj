@@ -212,6 +212,10 @@
                                                   (initialize opts true))) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
                                     :on-error on-error
                                     :on-receive #(handle-message % opts))))
+(defn stop
+  []
+  (ws/close @ws-connection))
+
 
 (comment
   (ws/close @ws-connection)

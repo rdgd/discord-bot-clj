@@ -15,7 +15,7 @@
 (defn server-state
   []
   ws/server-state)
-;(get-presences)
+
 ; CHANNELS
 (def get-channels http/get-channels)
 (def send-channel-message http/send-channel-message)
