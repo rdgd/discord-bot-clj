@@ -3,13 +3,18 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.rdgd</groupId>
   <artifactId>discord-bot</artifactId>
-  <version>0.1.10</version>
+  <version>0.1.11</version>
   <name>discord-bot</name>
   <dependencies>
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>clojure</artifactId>
       <version>1.10.3</version>
+    </dependency>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>tools.logging</artifactId>
+      <version>1.1.0</version>
     </dependency>
     <dependency>
       <groupId>clj-http</groupId>

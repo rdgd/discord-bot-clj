@@ -1,6 +1,7 @@
 (ns discord-bot.core
   (:require [discord-bot.clients.discord.http :as http]
-            [discord-bot.clients.discord.ws :as ws]))
+            [discord-bot.clients.discord.ws :as ws])
+  (:gen-class))
 
 ; WEBSOCKETS AND INITIALIZATION
 (def init ws/initialize)
