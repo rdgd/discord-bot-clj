@@ -60,14 +60,15 @@
   (log/error "ERROR: " e))
 
 (defn call-heartbeat
-  []
-  (if (= @heartbeat-semafor 0)
+  [& [override]]
+  (if (or override (= @heartbeat-semafor 0))
     (let [payload {:op 1
                    :d (or (:last-event-index @session) 0)}]
       (log/info "Calling Discord heartbeat")
       (reset! heartbeat-semafor 1)
       (ws-send payload))
     (do
+      (log/info "Heartbeat concurrency issue detected. Intentionally disconnecting.")
       (reset! intentionally-disconnected true)
       (close-connection)
       (initialize @the-opts))))
@@ -175,7 +176,8 @@
     (log/info "Received WS message from Discord: " full-msg)
     (case code
       0 (receive-event full-msg opts)
-      1 (log/info "received heartbeat from discord") ;;(call-heartbeat)
+      1 (do (log/info "received heartbeat request from discord")
+            (call-heartbeat true))
       7 (do (log/info "was asked to reconnect!")
             (reset! intentionally-disconnected true)
             (close-connection)
@@ -189,13 +191,14 @@
   []
   (log/info "Checking if heartbeat-timer is a future")
   (when (future? @heartbeat-timer)
-      (log/info "Heartbeat timer is a future")
-      (future-cancel @heartbeat-timer)
-      (log/info "Heartbeat timer future cancelled"))
-  (reset! heartbeat-semafor 0)
+    (log/info "Heartbeat timer is a future")
+    (future-cancel @heartbeat-timer)
+    (log/info "Heartbeat timer future cancelled"))
+
   (log/info "Resetting heartbeat timer to nil")
   (reset! heartbeat-timer nil)
-  (log/info "Heartbeat timer reset"))
+  (log/info "Heartbeat timer reset")
+  (reset! heartbeat-semafor 0))
 
 (defn initialize [& [opts resume?]]
   (log/info "Intializing WS session with Discord servers")
