@@ -71,7 +71,7 @@
       (log/info "Heartbeat concurrency issue detected. Intentionally disconnecting.")
       (reset! intentionally-disconnected true)
       (close-connection)
-      (initialize @the-opts))))
+      (initialize @the-opts true))))
 
 (defn get-ws-connection
   []
