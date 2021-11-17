@@ -68,8 +68,7 @@
       (reset! heartbeat-semafor 1)
       (ws-send payload))
     (do
-      (log/info "Heartbeat concurrency issue detected. Intentionally disconnecting.")
-      (reset! intentionally-disconnected true)
+      (log/info "Heartbeat concurrency issue detected. Disconnecting.")
       (close-connection)
       (initialize @the-opts true))))
 
@@ -180,9 +179,8 @@
             (call-heartbeat true))
       7 (do (log/info "was asked to reconnect!")
             (reset! intentionally-disconnected true)
-            (close-connection)
-            (initialize @the-opts true)) ;;reconnect
-      9 (do (log/info "was told the session is invalid!") (initialize @the-opts)) ;;invalid session
+            (close-connection)) ;;reconnect
+      9 (do (log/info "was told the session is invalid!") (close-connection)) ;;invalid session
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
       (log/warn "Received unrecognized WS message code from Discord: " code))))
@@ -200,21 +198,29 @@
   (log/info "Heartbeat timer reset")
   (reset! heartbeat-semafor 0))
 
+(defn reconnect?
+  [close-code]
+  (#{1000 4004 4010 4011 4012 4013 4014} close-code))
+
 (defn initialize [& [opts resume?]]
   (log/info "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
-  (reset! ws-connection (ws/connect (get-config [:ws-url])
-                                    :on-connect (partial on-connect resume?)
-                                    :on-close (fn [code reason]
-                                                (log/info "WS session terminated with code: " code " For reason: " reason)
-                                                (log/info "Intentionally disconnected? " @intentionally-disconnected)
-                                                (reset-state!)
-                                                (when-not @intentionally-disconnected
-                                                  (reset! intentionally-disconnected false)
-                                                  (initialize opts true))) ; this is where we previously tried to resume depending on the status code, but it doesn't work and gave up
-                                    :on-error on-error
-                                    :on-receive #(handle-message % opts))))
+  (reset!
+    ws-connection
+    (ws/connect
+      (get-config [:ws-url])
+      :on-connect (partial on-connect resume?)
+      :on-close
+      (fn [code reason]
+        (log/info "WS session terminated with code: " code " For reason: " reason)
+        (log/info "Intentionally disconnected? " @intentionally-disconnected)
+        (reset-state!)
+        (when (and reconnect? (not intentionally-disconnected))
+          (initialize opts true))) 
+      :on-error on-error
+      :on-receive #(handle-message % opts))))
+
 (defn stop
   []
   (reset! intentionally-disconnected true)
