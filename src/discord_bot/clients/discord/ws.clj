@@ -57,7 +57,8 @@
 
 (defn on-error  [e]
   (log/info "on-error handler called")
-  (log/error "ERROR: " e))
+  (log/error "ERROR: " e)
+  (initialize @the-opts true))
 
 (defn call-heartbeat
   [& [override]]
@@ -145,7 +146,9 @@
            on-presence-update
            on-typing-start
            on-channel-create
+           on-voice-state-update
            on-message-update
+           on-message-reaction-add
            on-guild-member-update
            on-guild-member-remove
            on-guild-role-delete]}]
@@ -162,6 +165,8 @@
     "GUILD_MEMBER_UPDATE" (handle-default data on-guild-member-update)
     "GUILD_MEMBER_REMOVE" (handle-default data on-guild-member-remove)
     "GUILD_ROLE_DELETE" (handle-default data on-guild-role-delete)
+    "VOICE_STATE_UPDATE" (handle-default data on-voice-state-update)
+    "MESSAGE_REACTION_ADD" (handle-default data on-message-reaction-add)
     (log/warn "Received an unknown event name " event-name ". Full event data: " data))
   (swap! session (fn [{:keys [last-event-index] :as s}]
                    (assoc s :last-event-index (if last-event-index
