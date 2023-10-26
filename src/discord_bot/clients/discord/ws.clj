@@ -18,6 +18,7 @@
   (log/info "SENDING WS PAYLOAD: " payload)
   (ws/send-msg @ws-connection (json/generate-string payload)))
 
+;; public
 (defn get-presences
   []
   (:presences @server-state))
@@ -29,11 +30,16 @@
                     "$browser" (get-config [:project-name])
                     "$device" "remote-discord-bot-server"}}})
 
-(defn close-connection
-  []
-  (ws/close @ws-connection))
+(defn close-connection [] (ws/close @ws-connection))
 
 
+;; After the connection is closed, your app should open a new connection using resume_gateway_url rather than the URL used to initially connect, with the same query parameters from the initial Connection. If your app doesn't use the resume_gateway_url when reconnecting, it will experience disconnects at a higher rate than normal.
+
+;;Once the new connection is opened, your app should send a Gateway Resume event using the session_id and sequence number mentioned above. When sending the event, session_id will have the same field name, but the last sequence number will be passed as seq in the data object (d).
+
+;;When Resuming, you do not need to send an Identify event after opening the connection.
+
+;;If successful, the Gateway will send the missed events in order, finishing with a Resumed event to signal event replay has finished and that all subsequent events will be new.
 (defn resume-session
   []
   (let [{:keys [session_id last-event-index]} @session]
@@ -41,21 +47,27 @@
     (ws-send {:op "6"
               :d {:token (get-config [:token])
                   :session_id session_id
-                  :seq (or last-event-index 0)}})))
+                  :seq last-event-index}})))
 
 (defn identify
-  []
-  (ws-send identify-payload))
+  ([]
+   (ws-send identify-payload))
+  ([intents]
+   (ws-send (assoc identify-payload :intents intents))))
 
-(defn on-connect  [resume? & _]
+(defn on-connect  [resume? {:keys [intents]} & _]
   (log/info "**** CALLED ON-CONNECT ****")
   (log/info (if resume?
              "Connected to WS, and attempting to resume session"
              "Connected to WS and attempting to identify"))
-  (identify)
-  (when resume? (resume-session)))
 
-(defn on-error  [e]
+  (if resume?
+    (resume-session)
+    (if intents
+      (indentify intents)
+      (identify))))
+
+(defn [e]  on-error
   (log/info "on-error handler called")
   (log/error "ERROR: " e)
   (initialize @the-opts true))
@@ -168,7 +180,11 @@
     "VOICE_STATE_UPDATE" (handle-default data on-voice-state-update)
     "MESSAGE_REACTION_ADD" (handle-default data on-message-reaction-add)
     (log/warn "Received an unknown event name " event-name ". Full event data: " data))
-  (swap! session (fn [{:keys [last-event-index] :as s}]
+  ;; should only be resetting when handling messages with opcode 0, which is when an "s" value would be present
+  ;; this function is only being called when opcode 0, so should always be present
+  ;; from the docs:
+  ;; Before your app can send a Resume (opcode 6) event, it will need three values: the session_id and the resume_gateway_url from the Ready event, and the sequence number (s) from the last Dispatch (opcode 0) event it received before the disconnect.
+  (swap! session (fn [{[last-event-index] :keys :as s}]
                    (assoc s :last-event-index (if last-event-index
                                                 (if (> event-index last-event-index)
                                                   event-index
@@ -211,18 +227,20 @@
   (log/info "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
+  (log/info "reset all the state, and about to reset the ws-connection state with a new ws connection object")
   (reset!
     ws-connection
     (ws/connect
+      ;; need to update the url with resume_gateway_url for resuming sessions
       (get-config [:ws-url])
-      :on-connect (partial on-connect resume?)
+      :on-connect (partial on-connect resume? opts)
       :on-close
       (fn [code reason]
         (log/info "WS session terminated with code: " code " For reason: " reason)
         (log/info "Intentionally disconnected? " @intentionally-disconnected)
         (reset-state!)
-        (when (and reconnect? (not intentionally-disconnected))
-          (initialize opts true))) 
+        (when (and resume? (not intentionally-disconnected))
+          (initialize opts true)))
       :on-error on-error
       :on-receive #(handle-message % opts))))
 
