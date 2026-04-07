@@ -44,7 +44,7 @@
   []
   (let [{:keys [session_id last-event-index]} @session]
     (log/info "Sending resume payload" session_id last-event-index)
-    (ws-send {:op "6"
+    (ws-send {:op 6
               :d {:token (get-config [:token])
                   :session_id session_id
                   :seq last-event-index}})))
@@ -64,10 +64,10 @@
   (if resume?
     (resume-session)
     (if intents
-      (indentify intents)
+      (identify intents)
       (identify))))
 
-(defn [e]  on-error
+(defn on-error [e]
   (log/info "on-error handler called")
   (log/error "ERROR: " e)
   (initialize @the-opts true))
@@ -184,12 +184,11 @@
   ;; this function is only being called when opcode 0, so should always be present
   ;; from the docs:
   ;; Before your app can send a Resume (opcode 6) event, it will need three values: the session_id and the resume_gateway_url from the Ready event, and the sequence number (s) from the last Dispatch (opcode 0) event it received before the disconnect.
-  (swap! session (fn [{[last-event-index] :keys :as s}]
-                   (assoc s :last-event-index (if last-event-index
-                                                (if (> event-index last-event-index)
-                                                  event-index
-                                                  last-event-index)
-                                                0)))))
+  (when event-index
+    (swap! session (fn [{:keys [last-event-index] :as s}]
+                     (assoc s :last-event-index (if (and last-event-index (> last-event-index event-index))
+                                                  last-event-index
+                                                  event-index)))))))
 
 (defn handle-message  [msg opts]
   (let [{code :op data :d :as full-msg} (json/parse-string msg true)]
@@ -199,9 +198,10 @@
       1 (do (log/info "received heartbeat request from discord")
             (call-heartbeat true))
       7 (do (log/info "was asked to reconnect!")
+            (close-connection)) ;;reconnect — on-close will auto-reconnect with resume
+      9 (do (log/info "was told the session is invalid!")
             (reset! intentionally-disconnected true)
-            (close-connection)) ;;reconnect
-      9 (do (log/info "was told the session is invalid!") (close-connection)) ;;invalid session
+            (close-connection)) ;;invalid session — must re-identify
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
       (log/warn "Received unrecognized WS message code from Discord: " code))))
@@ -227,6 +227,7 @@
   (log/info "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
+  (reset! intentionally-disconnected false)
   (log/info "reset all the state, and about to reset the ws-connection state with a new ws connection object")
   (reset!
     ws-connection
@@ -239,7 +240,7 @@
         (log/info "WS session terminated with code: " code " For reason: " reason)
         (log/info "Intentionally disconnected? " @intentionally-disconnected)
         (reset-state!)
-        (when (and resume? (not intentionally-disconnected))
+        (when (and resume? (not @intentionally-disconnected))
           (initialize opts true)))
       :on-error on-error
       :on-receive #(handle-message % opts))))
