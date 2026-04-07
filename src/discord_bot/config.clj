@@ -2,8 +2,8 @@
   (:require [clojure.core.memoize :as memo]
             [clojure.edn :as edn]))
 
-(defonce url "https://discordapp.com/api/")
-(defonce ws-url "wss://gateway.discord.gg/?v=6&encoding=json")
+(defonce url "https://discord.com/api/v10/")
+(defonce ws-url "wss://gateway.discord.gg/?v=10&encoding=json")
 
 (defn bot-config*
   []

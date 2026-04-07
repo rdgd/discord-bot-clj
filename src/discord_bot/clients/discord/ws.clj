@@ -18,28 +18,29 @@
   (log/info "SENDING WS PAYLOAD: " (cond-> payload (get-in payload [:d :token]) (assoc-in [:d :token] "REDACTED")))
   (ws/send-msg @ws-connection (json/generate-string payload)))
 
-;; public
 (defn get-presences
   []
   (:presences @server-state))
 
-(def identify-payload
+(defn build-identify-payload
+  [intents]
   {:op 2
-   :d {:token (get-config [:token])
-       :properties {"$os" "linux"
-                    "$browser" (get-config [:project-name])
-                    "$device" "remote-discord-bot-server"}}})
+   :d {:token      (get-config [:token])
+       :intents    intents
+       :properties {"os"      "linux"
+                    "browser" (get-config [:project-name])
+                    "device"  "remote-discord-bot-server"}}})
 
 (defn close-connection [] (ws/close @ws-connection))
 
 
-;; After the connection is closed, your app should open a new connection using resume_gateway_url rather than the URL used to initially connect, with the same query parameters from the initial Connection. If your app doesn't use the resume_gateway_url when reconnecting, it will experience disconnects at a higher rate than normal.
+; After the connection is closed, your app should open a new connection using resume_gateway_url rather than the URL used to initially connect, with the same query parameters from the initial Connection. If your app doesn't use the resume_gateway_url when reconnecting, it will experience disconnects at a higher rate than normal.
 
-;;Once the new connection is opened, your app should send a Gateway Resume event using the session_id and sequence number mentioned above. When sending the event, session_id will have the same field name, but the last sequence number will be passed as seq in the data object (d).
+;Once the new connection is opened, your app should send a Gateway Resume event using the session_id and sequence number mentioned above. When sending the event, session_id will have the same field name, but the last sequence number will be passed as seq in the data object (d).
 
-;;When Resuming, you do not need to send an Identify event after opening the connection.
+;When Resuming, you do not need to send an Identify event after opening the connection.
 
-;;If successful, the Gateway will send the missed events in order, finishing with a Resumed event to signal event replay has finished and that all subsequent events will be new.
+;If successful, the Gateway will send the missed events in order, finishing with a Resumed event to signal event replay has finished and that all subsequent events will be new.
 (defn resume-session
   []
   (let [{:keys [session_id last-event-index]} @session]
@@ -50,10 +51,8 @@
                   :seq last-event-index}})))
 
 (defn identify
-  ([]
-   (ws-send identify-payload))
-  ([intents]
-   (ws-send (assoc identify-payload :intents intents))))
+  [intents]
+  (ws-send (build-identify-payload intents)))
 
 (defn on-connect  [resume? {:keys [intents]} & _]
   (log/info "**** CALLED ON-CONNECT ****")
@@ -63,9 +62,7 @@
 
   (if resume?
     (resume-session)
-    (if intents
-      (identify intents)
-      (identify))))
+    (identify intents)))
 
 (defn on-error [e]
   (log/info "on-error handler called")
@@ -172,7 +169,8 @@
            on-message-reaction-add
            on-guild-member-update
            on-guild-member-remove
-           on-guild-role-delete]}]
+           on-guild-role-delete
+           on-interaction-create]}]
   (log/info "Received event: " event-name)
   (case event-name
     "READY" (reset! session data)
@@ -189,11 +187,12 @@
     "GUILD_ROLE_DELETE" (handle-default data on-guild-role-delete)
     "VOICE_STATE_UPDATE" (handle-default data on-voice-state-update)
     "MESSAGE_REACTION_ADD" (handle-default data on-message-reaction-add)
+    "INTERACTION_CREATE" (handle-default data on-interaction-create)
     (log/warn "Received an unknown event name " event-name ". Full event data: " data))
-  ;; should only be resetting when handling messages with opcode 0, which is when an "s" value would be present
-  ;; this function is only being called when opcode 0, so should always be present
-  ;; from the docs:
-  ;; Before your app can send a Resume (opcode 6) event, it will need three values: the session_id and the resume_gateway_url from the Ready event, and the sequence number (s) from the last Dispatch (opcode 0) event it received before the disconnect.
+  ; should only be resetting when handling messages with opcode 0, which is when an "s" value would be present
+  ; this function is only being called when opcode 0, so should always be present
+  ; from the docs:
+  ; Before your app can send a Resume (opcode 6) event, it will need three values: the session_id and the resume_gateway_url from the Ready event, and the sequence number (s) from the last Dispatch (opcode 0) event it received before the disconnect.
   (when event-index
     (swap! session (fn [{:keys [last-event-index] :as s}]
                      (assoc s :last-event-index (if (and last-event-index (> last-event-index event-index))
@@ -208,13 +207,13 @@
       1 (do (log/info "received heartbeat request from discord")
             (call-heartbeat true))
       7 (do (log/info "was asked to reconnect!")
-            (close-connection)) ;; reconnect — on-close will auto-reconnect with resume
+            (close-connection)) ;reconnect — on-close will auto-reconnect with resume
       9 (do (log/info "was told the session is invalid! Resumable: " data)
             (reset! intentionally-disconnected true)
             (close-connection)
-            (initialize opts (boolean data))) ;; re-identify if d=false, resume if d=true
+            (initialize opts (boolean data))) ;re-identify if d=false, resume if d=true
       10 (start-heartbeat (:heartbeat_interval data))
-      11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
+      11 (reset! heartbeat-semafor 0) ; heartbeat ack from discord
       (log/warn "Received unrecognized WS message code from Discord: " code))))
 
 (defn reset-state!
@@ -243,7 +242,7 @@
   (reset!
     ws-connection
     (ws/connect
-      ;; need to update the url with resume_gateway_url for resuming sessions
+      ; need to update the url with resume_gateway_url for resuming sessions
       (get-config [:ws-url])
       :on-connect (partial on-connect resume? opts)
       :on-close
