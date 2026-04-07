@@ -6,3 +6,6 @@ bot.edn
 src/.cpcache/*
 impl/*
 config.edn
+
+.lsp/*
+.clj-kondo/*
