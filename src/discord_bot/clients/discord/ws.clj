@@ -188,7 +188,7 @@
     (swap! session (fn [{:keys [last-event-index] :as s}]
                      (assoc s :last-event-index (if (and last-event-index (> last-event-index event-index))
                                                   last-event-index
-                                                  event-index)))))))
+                                                  event-index))))))
 
 (defn handle-message  [msg opts]
   (let [{code :op data :d :as full-msg} (json/parse-string msg true)]
