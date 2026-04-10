@@ -70,6 +70,9 @@
 (defn on-error [e]
   (log/info "on-error handler called")
   (log/error "ERROR: " e)
+  (reset! intentionally-disconnected true)
+  (when @ws-connection
+    (try (ws/close @ws-connection) (catch Exception _)))
   (initialize @the-opts true))
 
 (defn call-heartbeat
@@ -115,7 +118,7 @@
   (let [user-id (get-in data [:user :id])]
     (swap! server-state (fn [s]
                           (update s :presences (fn [presences]
-                                                 (map (fn [presence]
+                                                 (mapv (fn [presence]
                                                         (if (= user-id (get-in presence [:user :id]))
                                                           data
                                                           presence)) presences)))))))
@@ -144,6 +147,11 @@
   (swap! server-state (fn [s] (update s :channels (fn [c] (conj c data)))))
   (when callback (callback data)))
 
+(defn handle-channel-delete
+  [data & [callback]]
+  (swap! server-state (fn [s] (update s :channels (fn [c] (filterv #(not= (:id %) (:id data)) c)))))
+  (when callback (callback data)))
+
 (defn handle-message-update
   [data & [callback]]
   (log/info "Message updated: " data)
@@ -158,6 +166,7 @@
            on-presence-update
            on-typing-start
            on-channel-create
+           on-channel-delete
            on-voice-state-update
            on-message-update
            on-message-reaction-add
@@ -174,6 +183,7 @@
     "PRESENCE_UPDATE" (handle-presence-update data on-presence-update)
     "TYPING_START" (handle-typing-start data on-typing-start)
     "CHANNEL_CREATE" (handle-channel-create data on-channel-create)
+    "CHANNEL_DELETE" (handle-channel-delete data on-channel-delete)
     "GUILD_MEMBER_UPDATE" (handle-default data on-guild-member-update)
     "GUILD_MEMBER_REMOVE" (handle-default data on-guild-member-remove)
     "GUILD_ROLE_DELETE" (handle-default data on-guild-role-delete)
@@ -201,6 +211,7 @@
             (close-connection)) ;; reconnect — on-close will auto-reconnect with resume
       9 (do (log/info "was told the session is invalid! Resumable: " data)
             (reset! intentionally-disconnected true)
+            (close-connection)
             (initialize opts (boolean data))) ;; re-identify if d=false, resume if d=true
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
