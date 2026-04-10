@@ -15,7 +15,7 @@
 
 (defn ws-send
   [payload]
-  (log/info "SENDING WS PAYLOAD: " payload)
+  (log/info "SENDING WS PAYLOAD: " (cond-> payload (get-in payload [:d :token]) (assoc-in [:d :token] "REDACTED")))
   (ws/send-msg @ws-connection (json/generate-string payload)))
 
 ;; public
@@ -221,7 +221,7 @@
 
 (defn reconnect?
   [close-code]
-  (#{1000 4004 4010 4011 4012 4013 4014} close-code))
+  (not (#{4004 4010 4011 4012 4013 4014} close-code)))
 
 (defn initialize [& [opts resume?]]
   (log/info "Intializing WS session with Discord servers")
@@ -240,7 +240,7 @@
         (log/info "WS session terminated with code: " code " For reason: " reason)
         (log/info "Intentionally disconnected? " @intentionally-disconnected)
         (reset-state!)
-        (when (and resume? (not @intentionally-disconnected))
+        (when (and (reconnect? code) (not @intentionally-disconnected))
           (initialize opts true)))
       :on-error on-error
       :on-receive #(handle-message % opts))))
