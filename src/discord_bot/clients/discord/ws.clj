@@ -198,17 +198,10 @@
       1 (do (log/info "received heartbeat request from discord")
             (call-heartbeat true))
       7 (do (log/info "was asked to reconnect!")
-<<<<<<< Updated upstream
-            (close-connection)) ;;reconnect — on-close will auto-reconnect with resume
-      9 (do (log/info "was told the session is invalid!")
-            (reset! intentionally-disconnected true)
-            (close-connection)) ;;invalid session — must re-identify
-=======
-            (close-connection)) ;reconnect — on-close will auto-reconnect with resume
+            (close-connection)) ;; reconnect — on-close will auto-reconnect with resume
       9 (do (log/info "was told the session is invalid! Resumable: " data)
             (reset! intentionally-disconnected true)
-            (initialize opts (boolean data))) ;re-identify if d=false, resume if d=true
->>>>>>> Stashed changes
+            (initialize opts (boolean data))) ;; re-identify if d=false, resume if d=true
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ;; heartbeat ack from discord
       (log/warn "Received unrecognized WS message code from Discord: " code))))
