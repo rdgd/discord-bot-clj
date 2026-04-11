@@ -1,4 +1,4 @@
-# discord-bot
+# discord-bot-clj
 
 A Clojure library for the [Discord API](https://discord.com/developers/docs/intro) (v10). The library provides an API for [gateway](https://discord.com/developers/docs/events/gateway) websocket connection, 
 a REST client, and [slash command](https://discord.com/developers/docs/interactions/application-commands) support.
@@ -108,8 +108,8 @@ The gateway handles reconnection and session resumption automatically.
 ## Publishing
 
 ```
-clj -Spom && clj -A:jar discord-bot.jar
-env CLOJARS_USERNAME=<username> CLOJARS_PASSWORD=<token> clj -X:deploy
+make build
+env CLOJARS_USERNAME=rdgd CLOJARS_PASSWORD=<token> make deploy 
 ```
 
 ## License
