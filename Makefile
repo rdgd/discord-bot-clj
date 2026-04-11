@@ -1,6 +1,5 @@
 build:
-	clj -Spom
-	clj -A:jar discord-bot.jar
+	clj -T:build jar
 
 deploy:
 	clj -X:deploy

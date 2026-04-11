@@ -9,3 +9,6 @@ config.edn
 
 .lsp/*
 .clj-kondo/*
+
+target/
+pom.xml
