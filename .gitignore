@@ -7,7 +7,7 @@ src/.cpcache/*
 impl/*
 config.edn
 
-.lsp/*
+.lsp/.cache/
 .clj-kondo/*
 
 target/
