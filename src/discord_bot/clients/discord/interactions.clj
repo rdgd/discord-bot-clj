@@ -45,14 +45,14 @@
 
 (defn delete-global-command
   "Deletes a global application command. app-id and command-id are string
-  snowflakes. Returns nil on success."
+  snowflakes. Returns :ok on success."
   [app-id command-id]
   (api/api-request {:method :delete
                     :path   (str "applications/" app-id "/commands/" command-id)}))
 
 (defn delete-guild-command
   "Deletes a guild-specific application command. app-id, guild-id, and
-  command-id are string snowflakes. Returns nil on success."
+  command-id are string snowflakes. Returns :ok on success."
   [app-id guild-id command-id]
   (api/api-request {:method :delete
                     :path   (str "applications/" app-id "/guilds/" guild-id "/commands/" command-id)}))
@@ -112,7 +112,7 @@
 
 (defn delete-original-response
   "Deletes the original interaction response. app-id is a string snowflake.
-  interaction-token is a string. Returns nil on success."
+  interaction-token is a string. Returns :ok on success."
   [app-id interaction-token]
   (api/api-request {:method :delete
                     :path   (str "webhooks/" app-id "/" interaction-token "/messages/@original")}))

@@ -7,11 +7,11 @@
    "User-Agent"    (str (get-config [:project-name]) " " (get-config [:project-version]))})
 
 (defn api-request [{:keys [method path body query-params]}]
-  (:body
-   (rl/discord-request
-    (cond-> {:method  method
-             :url     (str (get-config [:url]) path)
-             :headers (mk-headers)
-             :as      :json}
-      body         (assoc :content-type :json :form-params body)
-      query-params (assoc :query-params query-params)))))
+  (let [response (rl/discord-request
+                   (cond-> {:method  method
+                            :url     (str (get-config [:url]) path)
+                            :headers (mk-headers)
+                            :as      :json}
+                     body         (assoc :content-type :json :form-params body)
+                     query-params (assoc :query-params query-params)))]
+    (or (:body response) :ok)))

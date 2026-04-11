@@ -99,7 +99,7 @@
 
 (defn delete-message
   "Deletes a message from a channel. channel-id and message-id are string
-  snowflakes. Returns nil on success."
+  snowflakes. Returns :ok on success."
   [channel-id message-id]
   (api/api-request {:method :delete
                     :path   (str "channels/" channel-id "/messages/" message-id)}))
@@ -107,7 +107,7 @@
 (defn bulk-delete-messages
   "Deletes multiple messages from a channel. channel-id is a string snowflake.
   message-ids is a sequence of string snowflakes (2-100 messages, not older
-  than 14 days). Returns nil on success."
+  than 14 days). Returns :ok on success."
   [channel-id message-ids]
   (api/api-request {:method :post
                     :path   (str "channels/" channel-id "/messages/bulk-delete")
@@ -117,14 +117,14 @@
 (defn create-reaction
   "Adds a reaction to a message as the bot user. channel-id and message-id
   are string snowflakes. emoji is a URL-encoded string (e.g. \"%F0%9F%94%A5\"
-  or \"custom_emoji:123456\"). Returns nil on success."
+  or \"custom_emoji:123456\"). Returns :ok on success."
   [channel-id message-id emoji]
   (api/api-request {:method :put
                     :path   (str "channels/" channel-id "/messages/" message-id "/reactions/" emoji "/@me")}))
 
 (defn delete-own-reaction
   "Removes the bot's own reaction from a message. channel-id and message-id
-  are string snowflakes. emoji is a URL-encoded string. Returns nil on success."
+  are string snowflakes. emoji is a URL-encoded string. Returns :ok on success."
   [channel-id message-id emoji]
   (api/api-request {:method :delete
                     :path   (str "channels/" channel-id "/messages/" message-id "/reactions/" emoji "/@me")}))
@@ -132,7 +132,7 @@
 (defn delete-user-reaction
   "Removes another user's reaction from a message. channel-id, message-id,
   and user-id are string snowflakes. emoji is a URL-encoded string.
-  Returns nil on success."
+  Returns :ok on success."
   [channel-id message-id emoji user-id]
   (api/api-request {:method :delete
                     :path   (str "channels/" channel-id "/messages/" message-id "/reactions/" emoji "/" user-id)}))
@@ -191,21 +191,21 @@
 
 (defn remove-guild-member
   "Kicks a member from a guild. guild-id and user-id are string snowflakes.
-  Returns nil on success."
+  Returns :ok on success."
   [guild-id user-id]
   (api/api-request {:method :delete
                     :path   (str "guilds/" guild-id "/members/" user-id)}))
 
 (defn add-guild-member-role
   "Assigns a role to a guild member. guild-id, user-id, and role-id are string
-  snowflakes. Returns nil on success."
+  snowflakes. Returns :ok on success."
   [guild-id user-id role-id]
   (api/api-request {:method :put
                     :path   (str "guilds/" guild-id "/members/" user-id "/roles/" role-id)}))
 
 (defn remove-guild-member-role
   "Removes a role from a guild member. guild-id, user-id, and role-id are
-  string snowflakes. Returns nil on success."
+  string snowflakes. Returns :ok on success."
   [guild-id user-id role-id]
   (api/api-request {:method :delete
                     :path   (str "guilds/" guild-id "/members/" user-id "/roles/" role-id)}))
@@ -237,7 +237,7 @@
 
 (defn delete-guild-role
   "Deletes a role from a guild. guild-id and role-id are string snowflakes.
-  Returns nil on success."
+  Returns :ok on success."
   [guild-id role-id]
   (api/api-request {:method :delete
                     :path   (str "guilds/" guild-id "/roles/" role-id)}))
