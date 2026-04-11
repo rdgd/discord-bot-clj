@@ -19,6 +19,9 @@
   (ws/send-msg @ws-connection (json/generate-string payload)))
 
 (defn get-presences
+  "Returns the presences for the connected guild as a vector of presence maps,
+  each containing :user, :status, :activities, etc. Returns nil if no guild
+  data has been received yet."
   []
   (:presences @server-state))
 
@@ -31,7 +34,10 @@
                     "browser" (get-config [:project-name])
                     "device"  "remote-discord-bot-server"}}})
 
-(defn close-connection [] (ws/close @ws-connection))
+(defn close-connection
+  "Closes the WebSocket connection to Discord. Takes no arguments. May trigger
+  auto-reconnect via the on-close handler unless intentionally-disconnected is set."
+  [] (ws/close @ws-connection))
 
 
 ; After the connection is closed, your app should open a new connection using resume_gateway_url rather than the URL used to initially connect, with the same query parameters from the initial Connection. If your app doesn't use the resume_gateway_url when reconnecting, it will experience disconnects at a higher rate than normal.
@@ -103,6 +109,9 @@
                 (recur))))))
 
 (defn get-user-by-id
+  "Looks up a guild member by their user ID. user-id is a string snowflake.
+  Returns the member map (containing :user, :roles, :nick, etc.) or nil if
+  not found."
   [user-id]
   (some (fn [member]
           (when (= (:id (:user member)) user-id)
@@ -136,6 +145,8 @@
   (when callback (callback data)))
 
 (defn started-new-game?
+  "Returns true if the game changed between two presence activity entries.
+  current-game and new-game are maps with a :name key (or nil). Returns boolean."
   [current-game new-game]
   (not= (:name current-game) (:name new-game)))
 
@@ -233,7 +244,23 @@
   [close-code]
   (not (#{4004 4010 4011 4012 4013 4014} close-code)))
 
-(defn init [& [opts resume?]]
+(defn init
+  "Opens a WebSocket connection to Discord and begins handling gateway events.
+  Both arguments are optional.
+
+  opts - a map of event callback functions, keyed by:
+    :on-message-create, :on-presence-update, :on-typing-start,
+    :on-channel-create, :on-channel-delete, :on-voice-state-update,
+    :on-message-update, :on-message-reaction-add, :on-guild-member-update,
+    :on-guild-member-remove, :on-guild-role-delete, :on-interaction-create
+    Each callback receives the event data map as its sole argument.
+    Also accepts :intents (integer bitfield for gateway intents).
+
+  resume? - boolean, when true resumes an existing session instead of
+    sending a fresh Identify.
+
+  Returns the WebSocket connection object."
+  [& [opts resume?]]
   (log/info "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
@@ -256,6 +283,8 @@
       :on-receive #(handle-message % opts))))
 
 (defn stop
+  "Gracefully disconnects from Discord without triggering auto-reconnect.
+  Takes no arguments. Returns nil."
   []
   (reset! intentionally-disconnected true)
   (close-connection))
