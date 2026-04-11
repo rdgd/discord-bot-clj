@@ -2,6 +2,7 @@
            clj-http/clj-http         {:mvn/version "3.10.0"}
            org.clojure/core.memoize  {:mvn/version "0.8.2"}
            org.clojure/tools.logging {:mvn/version "1.1.0"}
+           potemkin/potemkin         {:mvn/version "0.4.7"}
            stylefruits/gniazdo       {:mvn/version "1.1.2"}}
  :paths   ["src"]
  :aliases {:build   {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.9"}}

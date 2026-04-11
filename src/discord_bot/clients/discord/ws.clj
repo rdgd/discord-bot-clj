@@ -4,7 +4,7 @@
             [discord-bot.config :refer [get-config]]
             [gniazdo.core :as ws]))
 
-(declare initialize)
+(declare init)
 (def ws-connection (atom nil))
 (def session (atom nil))
 (def server-state (atom nil))
@@ -70,7 +70,7 @@
   (reset! intentionally-disconnected true)
   (when @ws-connection
     (try (ws/close @ws-connection) (catch Exception _)))
-  (initialize @the-opts true))
+  (init @the-opts true))
 
 (defn call-heartbeat
   [& [override]]
@@ -83,7 +83,7 @@
     (do
       (log/info "Heartbeat concurrency issue detected. Disconnecting.")
       (close-connection)
-      (initialize @the-opts true))))
+      (init @the-opts true))))
 
 (defn get-ws-connection
   []
@@ -211,7 +211,7 @@
       9 (do (log/info "was told the session is invalid! Resumable: " data)
             (reset! intentionally-disconnected true)
             (close-connection)
-            (initialize opts (boolean data))) ;re-identify if d=false, resume if d=true
+            (init opts (boolean data))) ;re-identify if d=false, resume if d=true
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ; heartbeat ack from discord
       (log/warn "Received unrecognized WS message code from Discord: " code))))
@@ -233,7 +233,7 @@
   [close-code]
   (not (#{4004 4010 4011 4012 4013 4014} close-code)))
 
-(defn initialize [& [opts resume?]]
+(defn init [& [opts resume?]]
   (log/info "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
@@ -251,7 +251,7 @@
         (log/info "Intentionally disconnected? " @intentionally-disconnected)
         (reset-state!)
         (when (and (reconnect? code) (not @intentionally-disconnected))
-          (initialize opts true)))
+          (init opts true)))
       :on-error on-error
       :on-receive #(handle-message % opts))))
 
@@ -264,5 +264,5 @@
 (comment
   (ws/close @ws-connection)
   (println @ws-connection)
-  (initialize @the-opts)
-  (initialize @the-opts true))
+  (init @the-opts)
+  (init @the-opts true))
