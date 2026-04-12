@@ -19,10 +19,10 @@
     (is (false? (ws/started-new-game? nil nil)))))
 
 (deftest reconnect?-test
-  (testing "reconnectable close codes"
-    (doseq [code [1000 4004 4010 4011 4012 4013 4014]]
-      (is (some? (ws/reconnect? code)) (str "should reconnect on code " code))))
+  (testing "reconnectable close codes (network/transient errors)"
+    (doseq [code [1000 1001 1006 4000 4001 4002 4003 4005 4007 4008 4009]]
+      (is (true? (ws/reconnect? code)) (str "should reconnect on code " code))))
 
-  (testing "non-reconnectable close codes"
-    (doseq [code [1001 1006 4000 4001 4002 4003 4005 4007 4008 4009]]
-      (is (nil? (ws/reconnect? code)) (str "should not reconnect on code " code)))))
+  (testing "non-reconnectable close codes (auth/config failures per Discord spec)"
+    (doseq [code [4004 4010 4011 4012 4013 4014]]
+      (is (false? (ws/reconnect? code)) (str "should not reconnect on code " code)))))
