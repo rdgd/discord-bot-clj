@@ -3,9 +3,10 @@
             [clojure.tools.logging :as log]
             [clojure.string :as cs]))
 
-(def state (atom {:buckets {}
-                  :route->bucket {}
-                  :global-reset-at 0}))
+(defn new-state []
+  (atom {:buckets {}
+         :route->bucket {}
+         :global-reset-at 0}))
 
 (defn- now-seconds []
   (/ (System/currentTimeMillis) 1000.0))
@@ -24,7 +25,7 @@
         restored (cs/replace normalized #"MAJOR:(\d+)" "$1")]
     (str (name method) " " restored)))
 
-(defn update-rate-limits! [rk response]
+(defn update-rate-limits! [state rk response]
   (let [headers (:headers response)]
     (when-let [bucket (get headers "x-ratelimit-bucket")]
       (let [remaining (parse-header headers "x-ratelimit-remaining")
@@ -35,7 +36,7 @@
                            (assoc-in [:buckets bucket] {:remaining remaining
                                                         :reset-at  reset}))))))))
 
-(defn wait-if-needed! [rk]
+(defn wait-if-needed! [state rk]
   (let [{:keys [buckets route->bucket global-reset-at]} @state
         now (now-seconds)]
     (when (> global-reset-at now)
@@ -49,7 +50,7 @@
             (log/info "Rate limit for" rk "- waiting" wait-ms "ms")
             (Thread/sleep wait-ms)))))))
 
-(defn- handle-429! [response]
+(defn- handle-429! [state response]
   (let [retry-after (or (parse-header (:headers response) "retry-after") 1.0)
         global?     (get-in response [:body :global])]
     (when global?
@@ -58,10 +59,10 @@
     (Thread/sleep (long (* retry-after 1000)))))
 
 (defn discord-request
-  ([opts] (discord-request opts 0))
-  ([{:keys [method url] :as opts} attempt]
+  ([state opts] (discord-request state opts 0))
+  ([state {:keys [method url] :as opts} attempt]
    (let [rk (route-key method url)]
-     (wait-if-needed! rk)
+     (wait-if-needed! state rk)
      (let [response (try
                       (http/request (assoc (dissoc opts :method)
                                            :method method
@@ -71,8 +72,8 @@
                           (if (= 429 (:status resp))
                             resp
                             (throw e)))))]
-       (update-rate-limits! rk response)
+       (update-rate-limits! state rk response)
        (if (and (= 429 (:status response)) (< attempt 3))
-         (do (handle-429! response)
-             (discord-request opts (inc attempt)))
+         (do (handle-429! state response)
+             (discord-request state opts (inc attempt)))
          response)))))

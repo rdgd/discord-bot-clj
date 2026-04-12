@@ -23,18 +23,18 @@
 
 (deftest update-rate-limits-tracks-buckets
   (testing "parses rate limit headers and stores bucket state"
-    (reset! rl/state {:buckets {} :route->bucket {} :global-reset-at 0})
-    (let [rk "GET /channels/:major/messages"
+    (let [state (rl/new-state)
+          rk "GET /channels/:major/messages"
           response {:headers {"x-ratelimit-bucket"    "abc123"
                               "x-ratelimit-remaining" "4"
                               "x-ratelimit-reset"     "1700000000.000"}}]
-      (rl/update-rate-limits! rk response)
-      (let [{:keys [buckets route->bucket]} @rl/state]
+      (rl/update-rate-limits! state rk response)
+      (let [{:keys [buckets route->bucket]} @state]
         (is (= "abc123" (get route->bucket rk)))
         (is (= 4.0 (:remaining (get buckets "abc123"))))
         (is (= 1700000000.0 (:reset-at (get buckets "abc123")))))))
 
   (testing "ignores responses without rate limit headers"
-    (reset! rl/state {:buckets {} :route->bucket {} :global-reset-at 0})
-    (rl/update-rate-limits! "GET /foo" {:headers {}})
-    (is (empty? (:buckets @rl/state)))))
+    (let [state (rl/new-state)]
+      (rl/update-rate-limits! state "GET /foo" {:headers {}})
+      (is (empty? (:buckets @state))))))

@@ -1,309 +1,305 @@
 (ns discord-bot.clients.discord.ws
   (:require [cheshire.core :as json]
             [clojure.tools.logging :as log]
-            [discord-bot.config :refer [get-config]]
-            [gniazdo.core :as ws]))
+            [discord-bot.clients.discord.rate-limit :as rl]
+            [gniazdo.core :as ws])
+  (:import [java.util.concurrent.locks ReentrantLock]))
 
-(declare init)
-(def ws-connection (atom nil))
-(def session (atom nil))
-(def server-state (atom nil))
-(def heartbeat-timer (atom nil))
-(def heartbeat-semafor (atom 0))
-(def the-opts (atom nil))
-;; Controls what on-close does when the WS terminates.
-;; :auto     - reconnect with resume if close code allows (default)
-;; :resume   - reconnect with resume (explicit)
-;; :identify - reconnect with a fresh identify (explicit)
-;; :stop     - do not reconnect
-(def reconnect-intent (atom :auto))
+(declare open!)
+
+(defn new-connection
+  "Creates a fresh connection map holding all mutable state for one bot.
+  config is a map with :token :ws-url :project-name (and anything else the
+  caller wants to carry around, like :project-version or :url for HTTP).
+  handlers is a map of event callbacks; each is (fn [conn data]).
+  intents is the Discord gateway intents bitfield."
+  [{:keys [config handlers intents]}]
+  {:config            config
+   :handlers          handlers
+   :intents           intents
+   :ws-conn           (atom nil)
+   :session           (atom nil)
+   :server-state      (atom nil)
+   :heartbeat-timer   (atom nil)
+   :heartbeat-semafor (atom 0)
+   :reconnect-intent  (atom :auto)
+   :generation        (atom 0)
+   :last-message-at   (atom nil)
+   :watchdog-timer    (atom nil)
+   :rate-limit-state  (rl/new-state)
+   :lifecycle-lock    (ReentrantLock.)})
+
+(defmacro with-lifecycle-lock [conn & body]
+  `(let [^ReentrantLock lock# (:lifecycle-lock ~conn)]
+     (.lock lock#)
+     (try ~@body
+          (finally (.unlock lock#)))))
 
 (defn ws-send
-  [payload]
+  [conn payload]
   (log/info "SENDING WS PAYLOAD: " (cond-> payload (get-in payload [:d :token]) (assoc-in [:d :token] "REDACTED")))
-  (ws/send-msg @ws-connection (json/generate-string payload)))
+  (ws/send-msg @(:ws-conn conn) (json/generate-string payload)))
 
 (defn get-presences
-  "Returns the presences for the connected guild as a vector of presence maps,
-  each containing :user, :status, :activities, etc. Returns nil if no guild
-  data has been received yet."
-  []
-  (:presences @server-state))
+  "Returns the presences for the connected guild as a vector of presence maps.
+  Returns nil if no guild data has been received yet."
+  [conn]
+  (:presences @(:server-state conn)))
+
+(defn get-user-by-id
+  "Looks up a guild member by their user ID."
+  [conn user-id]
+  (some
+   (fn [member] (when (= (:id (:user member)) user-id) member))
+   (:members @(:server-state conn))))
+
+(defn started-new-game?
+  "Returns true if the game changed between two presence activity entries."
+  [current-game new-game]
+  (not= (:name current-game) (:name new-game)))
 
 (defn build-identify-payload
-  [intents]
-  {:op 2
-   :d {:token      (get-config [:token])
-       :intents    intents
-       :properties {"os"      "linux"
-                    "browser" (get-config [:project-name])
-                    "device"  "remote-discord-bot-server"}}})
+  [conn]
+  (let [{:keys [token project-name]} (:config conn)]
+    {:op 2
+     :d {:token      token
+         :intents    (:intents conn)
+         :properties {"os"      "linux"
+                      "browser" project-name
+                      "device"  "remote-discord-bot-server"}}}))
 
 (defn close-connection
-  "Closes the WebSocket connection to Discord. Takes no arguments. The on-close
-  handler drives reconnection based on reconnect-intent."
-  []
-  (when-let [conn @ws-connection]
-    (try (ws/close conn) (catch Exception _))))
+  "Closes the WebSocket connection to Discord. The on-close handler drives
+  reconnection based on reconnect-intent. Errors from ws/close are logged but
+  not rethrown, since close is commonly called on a connection that is already
+  half-dead."
+  [conn]
+  (when-let [c @(:ws-conn conn)]
+    (try (ws/close c)
+         (catch Exception e
+           (log/warn e "ws/close threw (connection likely already closed)")))))
 
 (defn trigger-reconnect
   "Signal that on-close should reconnect in a specific mode, then close the
   current connection. mode is :resume or :identify."
-  [mode]
-  (reset! reconnect-intent mode)
-  (close-connection))
+  [conn mode]
+  (with-lifecycle-lock conn
+    (reset! (:reconnect-intent conn) mode)
+    (close-connection conn)))
 
-
-; After the connection is closed, your app should open a new connection using resume_gateway_url rather than the URL used to initially connect, with the same query parameters from the initial Connection. If your app doesn't use the resume_gateway_url when reconnecting, it will experience disconnects at a higher rate than normal.
-
-;Once the new connection is opened, your app should send a Gateway Resume event using the session_id and sequence number mentioned above. When sending the event, session_id will have the same field name, but the last sequence number will be passed as seq in the data object (d).
-
-;When Resuming, you do not need to send an Identify event after opening the connection.
-
-;If successful, the Gateway will send the missed events in order, finishing with a Resumed event to signal event replay has finished and that all subsequent events will be new.
 (defn resume-session
-  []
-  (let [{:keys [session_id last-event-index]} @session]
+  [conn]
+  (let [{:keys [session_id last-event-index]} @(:session conn)
+        token (get-in conn [:config :token])]
     (log/info "Sending resume payload" session_id last-event-index)
-    (ws-send {:op 6
-              :d {:token (get-config [:token])
-                  :session_id session_id
-                  :seq last-event-index}})))
+    (ws-send conn {:op 6
+                   :d {:token token
+                       :session_id session_id
+                       :seq last-event-index}})))
 
 (defn identify
-  [intents]
-  (ws-send (build-identify-payload intents)))
+  [conn]
+  (ws-send conn (build-identify-payload conn)))
 
-(defn on-connect  [resume? {:keys [intents]} & _]
+(defn on-connect [conn resume? & _]
   (log/info "**** CALLED ON-CONNECT ****")
   (log/info (if resume?
-             "Connected to WS, and attempting to resume session"
-             "Connected to WS and attempting to identify"))
-
+              "Connected to WS, and attempting to resume session"
+              "Connected to WS and attempting to identify"))
   (if resume?
-    (resume-session)
-    (identify intents)))
+    (resume-session conn)
+    (identify conn)))
 
-(defn on-error [e]
+(defn on-error [conn e]
   (log/info "on-error handler called")
   (log/error "ERROR: " e)
-  (trigger-reconnect :resume))
+  (trigger-reconnect conn :resume))
 
 (defn call-heartbeat
-  [& [override]]
-  (if (or override (= @heartbeat-semafor 0))
+  [conn & [override]]
+  (if (or override (= @(:heartbeat-semafor conn) 0))
     (let [payload {:op 1
-                   :d (or (:last-event-index @session) 0)}]
+                   :d (or (:last-event-index @(:session conn)) 0)}]
       (log/info "Calling Discord heartbeat")
-      (reset! heartbeat-semafor 1)
-      (ws-send payload))
+      (reset! (:heartbeat-semafor conn) 1)
+      (ws-send conn payload))
     (do
       (log/info "Heartbeat concurrency issue detected. Disconnecting.")
-      (trigger-reconnect :resume))))
-
-(defn get-ws-connection
-  []
-  ws-connection)
+      (trigger-reconnect conn :resume))))
 
 (defn start-heartbeat
-  [interval]
-  (when (future? @heartbeat-timer)
-    (future-cancel @heartbeat-timer))
-  (reset! heartbeat-semafor 0)
-  (reset! heartbeat-timer
+  [conn interval]
+  (when (future? @(:heartbeat-timer conn))
+    (future-cancel @(:heartbeat-timer conn)))
+  (reset! (:heartbeat-semafor conn) 0)
+  (reset! (:heartbeat-timer conn)
           (future
             (loop []
               (Thread/sleep interval)
-              (when @(get-ws-connection)
-                (call-heartbeat)
+              (when @(:ws-conn conn)
+                (call-heartbeat conn)
                 (recur))))))
 
-(defn get-user-by-id
-  "Looks up a guild member by their user ID. user-id is a string snowflake.
-  Returns the member map (containing :user, :roles, :nick, etc.) or nil if
-  not found."
-  [user-id]
-  (some (fn [member]
-          (when (= (:id (:user member)) user-id)
-            member))
-        (:members @server-state)))
-
 (defn handle-presence-update
-  [data & [callback]]
-  (when callback (callback data))
+  [conn data]
+  (when-let [cb (get-in conn [:handlers :on-presence-update])]
+    (cb conn data))
   (let [user-id (get-in data [:user :id])]
-    (swap! server-state (fn [s]
-                          (update s :presences (fn [presences]
-                                                 (mapv (fn [presence]
-                                                        (if (= user-id (get-in presence [:user :id]))
-                                                          data
-                                                          presence)) presences)))))))
+    (swap!
+     (:server-state conn)
+     (fn [s]
+       (update s :presences
+               (fn [presences]
+                 (mapv (fn [p]
+                         (if (= user-id (get-in p [:user :id])) data p))
+                       presences)))))))
 
-(defn handle-message-create
-  [data & [callback]]
-  (log/info "Message created: " data)
-  (when callback (callback data)))
-
-(defn handle-typing-start
-  [data & [callback]]
-  (log/info "Typing started: " data)
-  (when callback (callback data)))
-
-(defn handle-default
-  [data & [callback]]
-  (log/info "default event handler: " data)
-  (when callback (callback data)))
-
-(defn started-new-game?
-  "Returns true if the game changed between two presence activity entries.
-  current-game and new-game are maps with a :name key (or nil). Returns boolean."
-  [current-game new-game]
-  (not= (:name current-game) (:name new-game)))
+(defn- dispatch-handler
+  [conn handler-key data]
+  (when-let [cb (get-in conn [:handlers handler-key])]
+    (cb conn data)))
 
 (defn handle-channel-create
-  [data & [callback]]
-  (swap! server-state (fn [s] (update s :channels (fn [c] (conj c data)))))
-  (when callback (callback data)))
+  [conn data]
+  (swap! (:server-state conn) update :channels conj data)
+  (dispatch-handler conn :on-channel-create data))
 
 (defn handle-channel-delete
-  [data & [callback]]
-  (swap! server-state (fn [s] (update s :channels (fn [c] (filterv #(not= (:id %) (:id data)) c)))))
-  (when callback (callback data)))
-
-(defn handle-message-update
-  [data & [callback]]
-  (log/info "Message updated: " data)
-  (when callback (callback data)))
+  [conn data]
+  (swap! (:server-state conn) update :channels
+         (fn [cs] (filterv #(not= (:id %) (:id data)) cs)))
+  (dispatch-handler conn :on-channel-delete data))
 
 (defn handle-session-resumed [data]
-  (log/info "*** DISCORD WS SESSION RESUMED SUCCESSFULLY *** data: " data))
+  (log/info "*** DISCORD WS SESSION RESUMED SUCCESSFULLY *** data:" data))
 
 (defn receive-event
-  [{data :d event-name :t event-index :s}
-   {:keys [on-message-create
-           on-presence-update
-           on-typing-start
-           on-channel-create
-           on-channel-delete
-           on-voice-state-update
-           on-message-update
-           on-message-reaction-add
-           on-guild-member-update
-           on-guild-member-remove
-           on-guild-role-delete
-           on-interaction-create]}]
+  [conn {data :d event-name :t event-index :s}]
   (log/info "Received event: " event-name)
   (case event-name
-    "READY" (reset! session data)
-    "RESUMED" (handle-session-resumed data)
-    "GUILD_CREATE" (reset! server-state data)
-    "MESSAGE_CREATE" (handle-message-create data on-message-create)
-    "MESSAGE_UPDATE" (handle-message-update data on-message-update)
-    "PRESENCE_UPDATE" (handle-presence-update data on-presence-update)
-    "TYPING_START" (handle-typing-start data on-typing-start)
-    "CHANNEL_CREATE" (handle-channel-create data on-channel-create)
-    "CHANNEL_DELETE" (handle-channel-delete data on-channel-delete)
-    "GUILD_MEMBER_UPDATE" (handle-default data on-guild-member-update)
-    "GUILD_MEMBER_REMOVE" (handle-default data on-guild-member-remove)
-    "GUILD_ROLE_DELETE" (handle-default data on-guild-role-delete)
-    "VOICE_STATE_UPDATE" (handle-default data on-voice-state-update)
-    "MESSAGE_REACTION_ADD" (handle-default data on-message-reaction-add)
-    "INTERACTION_CREATE" (handle-default data on-interaction-create)
-    (log/warn "Received an unknown event name " event-name ". Full event data: " data))
-  ; should only be resetting when handling messages with opcode 0, which is when an "s" value would be present
-  ; this function is only being called when opcode 0, so should always be present
-  ; from the docs:
-  ; Before your app can send a Resume (opcode 6) event, it will need three values: the session_id and the resume_gateway_url from the Ready event, and the sequence number (s) from the last Dispatch (opcode 0) event it received before the disconnect.
+    "READY"                (reset! (:session conn) data)
+    "RESUMED"              (handle-session-resumed data)
+    "GUILD_CREATE"         (reset! (:server-state conn) data)
+    "MESSAGE_CREATE"       (dispatch-handler conn :on-message-create data)
+    "MESSAGE_UPDATE"       (dispatch-handler conn :on-message-update data)
+    "PRESENCE_UPDATE"      (handle-presence-update conn data)
+    "TYPING_START"         (dispatch-handler conn :on-typing-start data)
+    "CHANNEL_CREATE"       (handle-channel-create conn data)
+    "CHANNEL_DELETE"       (handle-channel-delete conn data)
+    "GUILD_MEMBER_UPDATE"  (dispatch-handler conn :on-guild-member-update data)
+    "GUILD_MEMBER_REMOVE"  (dispatch-handler conn :on-guild-member-remove data)
+    "GUILD_ROLE_DELETE"    (dispatch-handler conn :on-guild-role-delete data)
+    "VOICE_STATE_UPDATE"   (dispatch-handler conn :on-voice-state-update data)
+    "MESSAGE_REACTION_ADD" (dispatch-handler conn :on-message-reaction-add data)
+    "INTERACTION_CREATE"   (dispatch-handler conn :on-interaction-create data)
+    (log/warn "Received an unknown event name" event-name ". Full event data:" data))
   (when event-index
-    (swap! session (fn [{:keys [last-event-index] :as s}]
-                     (assoc s :last-event-index (if (and last-event-index (> last-event-index event-index))
-                                                  last-event-index
-                                                  event-index))))))
+    (swap! (:session conn)
+           (fn [{:keys [last-event-index] :as s}]
+             (assoc s :last-event-index
+                    (if (and last-event-index (> last-event-index event-index))
+                      last-event-index
+                      event-index))))))
 
-(defn handle-message  [msg opts]
+(defn handle-message [conn msg]
+  (reset! (:last-message-at conn) (System/currentTimeMillis))
   (let [{code :op data :d :as full-msg} (json/parse-string msg true)]
-    (log/info "Received WS message from Discord: " full-msg)
+    (log/info "Received WS message from Discord:" full-msg)
     (case code
-      0 (receive-event full-msg opts)
-      1 (do (log/info "received heartbeat request from discord")
-            (call-heartbeat true))
-      7 (do (log/info "was asked to reconnect!")
-            (trigger-reconnect :resume))
-      9 (do (log/info "was told the session is invalid! Resumable: " data)
-            (trigger-reconnect (if (boolean data) :resume :identify)))
-      10 (start-heartbeat (:heartbeat_interval data))
-      11 (reset! heartbeat-semafor 0) ; heartbeat ack from discord
-      (log/warn "Received unrecognized WS message code from Discord: " code))))
+      0  (receive-event conn full-msg)
+      1  (do (log/info "received heartbeat request from discord")
+             (call-heartbeat conn true))
+      7  (do (log/info "was asked to reconnect!")
+             (trigger-reconnect conn :resume))
+      9  (do (log/info "was told the session is invalid! Resumable:" data)
+             (trigger-reconnect conn (if (boolean data) :resume :identify)))
+      10 (start-heartbeat conn (:heartbeat_interval data))
+      11 (reset! (:heartbeat-semafor conn) 0)
+      (log/warn "Received unrecognized WS message code from Discord:" code))))
 
 (defn reset-state!
-  []
-  (log/info "Checking if heartbeat-timer is a future")
-  (when (future? @heartbeat-timer)
-    (log/info "Heartbeat timer is a future")
-    (future-cancel @heartbeat-timer)
-    (log/info "Heartbeat timer future cancelled"))
-
-  (log/info "Resetting heartbeat timer to nil")
-  (reset! heartbeat-timer nil)
-  (log/info "Heartbeat timer reset")
-  (reset! heartbeat-semafor 0))
+  [conn]
+  (when (future? @(:heartbeat-timer conn))
+    (future-cancel @(:heartbeat-timer conn)))
+  (reset! (:heartbeat-timer conn) nil)
+  (reset! (:heartbeat-semafor conn) 0))
 
 (defn reconnect?
   [close-code]
   (not (#{4004 4010 4011 4012 4013 4014} close-code)))
 
-(defn init
-  "Opens a WebSocket connection to Discord and begins handling gateway events.
-  Both arguments are optional.
+(def ^:private watchdog-interval-ms 15000)
+(def ^:private watchdog-stale-threshold-ms 90000)
 
-  opts - a map of event callback functions, keyed by:
-    :on-message-create, :on-presence-update, :on-typing-start,
-    :on-channel-create, :on-channel-delete, :on-voice-state-update,
-    :on-message-update, :on-message-reaction-add, :on-guild-member-update,
-    :on-guild-member-remove, :on-guild-role-delete, :on-interaction-create
-    Each callback receives the event data map as its sole argument.
-    Also accepts :intents (integer bitfield for gateway intents).
+(defn- start-watchdog! [conn]
+  (when-not @(:watchdog-timer conn)
+    (reset! (:watchdog-timer conn)
+            (future
+              (loop []
+                (try
+                  (Thread/sleep watchdog-interval-ms)
+                  (when-let [last @(:last-message-at conn)]
+                    (let [elapsed (- (System/currentTimeMillis) last)]
+                      (when (> elapsed watchdog-stale-threshold-ms)
+                        (log/warn "Watchdog: no Discord traffic in" elapsed "ms, forcing reconnect")
+                        (reset! (:last-message-at conn) (System/currentTimeMillis))
+                        (trigger-reconnect conn :resume))))
+                  (catch InterruptedException _ (throw (InterruptedException.)))
+                  (catch Throwable t (log/error t "Watchdog loop error")))
+                (recur))))))
 
-  resume? - boolean, when true resumes an existing session instead of
-    sending a fresh Identify.
+(defn- open!
+  "Opens a new WS connection. Caller must hold lifecycle-lock."
+  [conn resume?]
+  (let [my-gen (swap! (:generation conn) inc)
+        ws-url (get-in conn [:config :ws-url])]
+    (log/info "Opening WS session (generation" my-gen ")")
+    (reset-state! conn)
+    (reset! (:reconnect-intent conn) :auto)
+    (reset! (:last-message-at conn) (System/currentTimeMillis))
+    (reset!
+     (:ws-conn conn)
+     (ws/connect
+       ws-url
+       :on-connect (fn [& _] (on-connect conn resume?))
+       :on-close
+       (fn [code reason]
+         (with-lifecycle-lock conn
+           (log/info "WS session terminated code:" code "reason:" reason "generation:" my-gen)
+           (if (not= my-gen @(:generation conn))
+             (log/info "on-close for superseded connection (gen" my-gen
+                       "current" @(:generation conn) "); ignoring")
+             (let [intent @(:reconnect-intent conn)]
+               (log/info "on-close reconnect-intent:" intent)
+               (reset-state! conn)
+               (case intent
+                 :stop     nil
+                 :resume   (open! conn true)
+                 :identify (open! conn false)
+                 :auto     (when (reconnect? code) (open! conn true)))))))
+       :on-error #(on-error conn %)
+       :on-receive #(handle-message conn %)))))
 
-  Returns the WebSocket connection object."
-  [& [opts resume?]]
-  (log/info "Intializing WS session with Discord servers")
-  (reset-state!)
-  (reset! the-opts opts)
-  (reset! reconnect-intent :auto)
-  (log/info "reset all the state, and about to reset the ws-connection state with a new ws connection object")
-  (reset!
-    ws-connection
-    (ws/connect
-      ; need to update the url with resume_gateway_url for resuming sessions
-      (get-config [:ws-url])
-      :on-connect (partial on-connect resume? opts)
-      :on-close
-      (fn [code reason]
-        (log/info "WS session terminated with code: " code " For reason: " reason)
-        (let [intent @reconnect-intent]
-          (log/info "on-close reconnect-intent: " intent)
-          (reset-state!)
-          (case intent
-            :stop     nil
-            :resume   (init opts true)
-            :identify (init opts false)
-            :auto     (when (reconnect? code) (init opts true)))))
-      :on-error on-error
-      :on-receive #(handle-message % opts))))
+(defn start!
+  "Opens a WebSocket connection to Discord for the given connection map.
+  If a connection is already open for this conn, it is closed first.
+  Returns the connection map."
+  [conn]
+  (with-lifecycle-lock conn
+    (when-let [existing @(:ws-conn conn)]
+      (log/info "start! called with existing connection; closing it first")
+      (try (ws/close existing) (catch Exception _)))
+    (start-watchdog! conn)
+    (open! conn false)
+    conn))
 
-(defn stop
+(defn stop!
   "Gracefully disconnects from Discord without triggering auto-reconnect.
-  Takes no arguments. Returns nil."
-  []
-  (reset! reconnect-intent :stop)
-  (close-connection))
-
-
-(comment
-  (ws/close @ws-connection)
-  (println @ws-connection)
-  (init @the-opts)
-  (init @the-opts true))
+  Cancels the watchdog. Returns nil."
+  [conn]
+  (with-lifecycle-lock conn
+    (reset! (:reconnect-intent conn) :stop)
+    (close-connection conn)
+    (when-let [wd @(:watchdog-timer conn)]
+      (future-cancel wd)
+      (reset! (:watchdog-timer conn) nil))))
