@@ -81,11 +81,15 @@
 
 (defn trigger-reconnect
   "Signal that on-close should reconnect in a specific mode, then close the
-  current connection. mode is :resume or :identify."
+  current connection. mode is :resume or :identify. The actual close runs on
+  a separate thread so callers invoked from Jetty's WebSocket callback
+  threads don't interrupt themselves when Jetty tears down its own thread
+  pool during close."
   [conn mode]
   (with-lifecycle-lock conn
-    (reset! (:reconnect-intent conn) mode)
-    (close-connection conn)))
+    (reset! (:reconnect-intent conn) mode))
+  (future (close-connection conn))
+  nil)
 
 (defn resume-session
   [conn]
@@ -103,12 +107,14 @@
 
 (defn on-connect [conn resume? & _]
   (log/info "**** CALLED ON-CONNECT ****")
-  (log/info (if resume?
-              "Connected to WS, and attempting to resume session"
-              "Connected to WS and attempting to identify"))
-  (if resume?
-    (resume-session conn)
-    (identify conn)))
+  (let [session @(:session conn)
+        can-resume? (and resume? (:session_id session))]
+    (log/info (if can-resume?
+                "Connected to WS, and attempting to resume session"
+                "Connected to WS and attempting to identify"))
+    (if can-resume?
+      (resume-session conn)
+      (identify conn))))
 
 (defn on-error [conn e]
   (log/info "on-error handler called")
@@ -252,7 +258,11 @@
   "Opens a new WS connection. Caller must hold lifecycle-lock."
   [conn resume?]
   (let [my-gen (swap! (:generation conn) inc)
-        ws-url (get-in conn [:config :ws-url])]
+        ws-url (get-in conn [:config :ws-url])
+        ;; Gniazdo may fire on-connect from a Jetty thread before ws/connect
+        ;; returns and the outer reset! populates (:ws-conn conn). Gate the
+        ;; callback on this promise so it never runs before the atom is set.
+        ready (promise)]
     (log/info "Opening WS session (generation" my-gen ")")
     (reset-state! conn)
     (reset! (:reconnect-intent conn) :auto)
@@ -261,7 +271,9 @@
      (:ws-conn conn)
      (ws/connect
        ws-url
-       :on-connect (fn [& _] (on-connect conn resume?))
+       :on-connect (fn [& _]
+                     @ready
+                     (on-connect conn resume?))
        :on-close
        (fn [code reason]
          (with-lifecycle-lock conn
@@ -278,7 +290,8 @@
                  :identify (open! conn false)
                  :auto     (when (reconnect? code) (open! conn true)))))))
        :on-error #(on-error conn %)
-       :on-receive #(handle-message conn %)))))
+       :on-receive #(handle-message conn %)))
+    (deliver ready true)))
 
 (defn start!
   "Opens a WebSocket connection to Discord for the given connection map.
