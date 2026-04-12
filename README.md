@@ -7,7 +7,7 @@ a REST client, and [slash command](https://discord.com/developers/docs/interacti
 
 deps.edn:
 ```clojure
-io.rdgd/discord-bot {:mvn/version "0.3.0"}
+io.rdgd/discord-bot {:mvn/version "0.3.1"}
 ```
 
 ## Configuration
