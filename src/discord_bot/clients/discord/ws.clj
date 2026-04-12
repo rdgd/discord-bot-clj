@@ -11,7 +11,12 @@
 (def heartbeat-timer (atom nil))
 (def heartbeat-semafor (atom 0))
 (def the-opts (atom nil))
-(def intentionally-disconnected (atom false))
+;; Controls what on-close does when the WS terminates.
+;; :auto     - reconnect with resume if close code allows (default)
+;; :resume   - reconnect with resume (explicit)
+;; :identify - reconnect with a fresh identify (explicit)
+;; :stop     - do not reconnect
+(def reconnect-intent (atom :auto))
 
 (defn ws-send
   [payload]
@@ -35,9 +40,18 @@
                     "device"  "remote-discord-bot-server"}}})
 
 (defn close-connection
-  "Closes the WebSocket connection to Discord. Takes no arguments. May trigger
-  auto-reconnect via the on-close handler unless intentionally-disconnected is set."
-  [] (ws/close @ws-connection))
+  "Closes the WebSocket connection to Discord. Takes no arguments. The on-close
+  handler drives reconnection based on reconnect-intent."
+  []
+  (when-let [conn @ws-connection]
+    (try (ws/close conn) (catch Exception _))))
+
+(defn trigger-reconnect
+  "Signal that on-close should reconnect in a specific mode, then close the
+  current connection. mode is :resume or :identify."
+  [mode]
+  (reset! reconnect-intent mode)
+  (close-connection))
 
 
 ; After the connection is closed, your app should open a new connection using resume_gateway_url rather than the URL used to initially connect, with the same query parameters from the initial Connection. If your app doesn't use the resume_gateway_url when reconnecting, it will experience disconnects at a higher rate than normal.
@@ -73,10 +87,7 @@
 (defn on-error [e]
   (log/info "on-error handler called")
   (log/error "ERROR: " e)
-  (reset! intentionally-disconnected true)
-  (when @ws-connection
-    (try (ws/close @ws-connection) (catch Exception _)))
-  (init @the-opts true))
+  (trigger-reconnect :resume))
 
 (defn call-heartbeat
   [& [override]]
@@ -88,8 +99,7 @@
       (ws-send payload))
     (do
       (log/info "Heartbeat concurrency issue detected. Disconnecting.")
-      (close-connection)
-      (init @the-opts true))))
+      (trigger-reconnect :resume))))
 
 (defn get-ws-connection
   []
@@ -218,11 +228,9 @@
       1 (do (log/info "received heartbeat request from discord")
             (call-heartbeat true))
       7 (do (log/info "was asked to reconnect!")
-            (close-connection)) ;reconnect — on-close will auto-reconnect with resume
+            (trigger-reconnect :resume))
       9 (do (log/info "was told the session is invalid! Resumable: " data)
-            (reset! intentionally-disconnected true)
-            (close-connection)
-            (init opts (boolean data))) ;re-identify if d=false, resume if d=true
+            (trigger-reconnect (if (boolean data) :resume :identify)))
       10 (start-heartbeat (:heartbeat_interval data))
       11 (reset! heartbeat-semafor 0) ; heartbeat ack from discord
       (log/warn "Received unrecognized WS message code from Discord: " code))))
@@ -264,7 +272,7 @@
   (log/info "Intializing WS session with Discord servers")
   (reset-state!)
   (reset! the-opts opts)
-  (reset! intentionally-disconnected false)
+  (reset! reconnect-intent :auto)
   (log/info "reset all the state, and about to reset the ws-connection state with a new ws connection object")
   (reset!
     ws-connection
@@ -275,10 +283,14 @@
       :on-close
       (fn [code reason]
         (log/info "WS session terminated with code: " code " For reason: " reason)
-        (log/info "Intentionally disconnected? " @intentionally-disconnected)
-        (reset-state!)
-        (when (and (reconnect? code) (not @intentionally-disconnected))
-          (init opts true)))
+        (let [intent @reconnect-intent]
+          (log/info "on-close reconnect-intent: " intent)
+          (reset-state!)
+          (case intent
+            :stop     nil
+            :resume   (init opts true)
+            :identify (init opts false)
+            :auto     (when (reconnect? code) (init opts true)))))
       :on-error on-error
       :on-receive #(handle-message % opts))))
 
@@ -286,7 +298,7 @@
   "Gracefully disconnects from Discord without triggering auto-reconnect.
   Takes no arguments. Returns nil."
   []
-  (reset! intentionally-disconnected true)
+  (reset! reconnect-intent :stop)
   (close-connection))
 
 

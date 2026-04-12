@@ -31,8 +31,8 @@
   (ws/stop))
 
 (defn close-connection
-  "Closes the WebSocket connection to Discord. Takes no arguments. May trigger
-  auto-reconnect via the on-close handler unless intentionally-disconnected is set."
+  "Closes the WebSocket connection to Discord. Takes no arguments. The on-close
+  handler drives reconnection based on the current reconnect-intent."
   []
   (ws/close-connection))
 
