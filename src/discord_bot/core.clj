@@ -91,8 +91,31 @@
     (try (.removeShutdownHook (Runtime/getRuntime) hook)
          (catch IllegalStateException _))))  ; already in shutdown
 
+(def ^:private force-halt-grace-ms
+  "Milliseconds to wait after disconnect before forcibly halting the JVM.
+  Gives normal exit a chance first, but ensures the process does not hang on
+  lingering non-daemon threads from gniazdo's Jetty WS client."
+  3000)
+
 (defn- register-shutdown-hook! [conn]
-  (let [hook (Thread. ^Runnable #(ws/stop! conn) "discord-bot-shutdown")]
+  (let [hook (Thread.
+              ^Runnable
+              (fn []
+                (try (ws/stop! conn)
+                     (catch Throwable t
+                       (.println System/err (str "shutdown error: " t))))
+                ;; Daemon timer. Doesn't prevent clean exit on its own, but
+                ;; if non-daemon threads linger past the grace period we
+                ;; halt the JVM so the process always terminates.
+                (doto (Thread.
+                       ^Runnable
+                       (fn []
+                         (Thread/sleep force-halt-grace-ms)
+                         (.halt (Runtime/getRuntime) 0))
+                       "discord-bot-force-halt")
+                  (.setDaemon true)
+                  (.start)))
+              "discord-bot-shutdown")]
     (.addShutdownHook (Runtime/getRuntime) hook)
     hook))
 
