@@ -2,7 +2,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'io.rdgd/discord-bot)
-(def version "0.3.1")
+(def version "0.3.2")
 (def class-dir "target/classes")
 (def jar-file "target/discord-bot.jar")
 (def basis (delay (b/create-basis {:project "deps.edn"})))
