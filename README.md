@@ -103,6 +103,9 @@ Messages:
 Channels:
 `get-channel`, `get-channels`, `create-channel`, `modify-channel`, `delete-channel`
 
+Threads:
+`start-thread-from-message`, `start-thread-in-channel`, `join-thread`, `leave-thread`, `add-thread-member`, `remove-thread-member`, `get-thread-member`, `list-thread-members`, `list-active-guild-threads`, `list-public-archived-threads`, `list-private-archived-threads`, `list-joined-private-archived-threads`
+
 Guilds:
 `get-guild`, `modify-guild`
 
@@ -128,17 +131,50 @@ Pass callbacks in the `:handlers` map to `connect`. Each callback receives `data
 |---|---|
 | `:on-message-create` | MESSAGE_CREATE |
 | `:on-message-update` | MESSAGE_UPDATE |
+| `:on-message-delete` | MESSAGE_DELETE |
+| `:on-message-delete-bulk` | MESSAGE_DELETE_BULK |
 | `:on-message-reaction-add` | MESSAGE_REACTION_ADD |
+| `:on-message-reaction-remove` | MESSAGE_REACTION_REMOVE |
+| `:on-message-reaction-remove-all` | MESSAGE_REACTION_REMOVE_ALL |
+| `:on-message-reaction-remove-emoji` | MESSAGE_REACTION_REMOVE_EMOJI |
 | `:on-presence-update` | PRESENCE_UPDATE |
 | `:on-typing-start` | TYPING_START |
 | `:on-channel-create` | CHANNEL_CREATE |
+| `:on-channel-update` | CHANNEL_UPDATE |
+| `:on-channel-delete` | CHANNEL_DELETE |
+| `:on-channel-pins-update` | CHANNEL_PINS_UPDATE |
+| `:on-thread-create` | THREAD_CREATE |
+| `:on-thread-update` | THREAD_UPDATE |
+| `:on-thread-delete` | THREAD_DELETE |
+| `:on-thread-list-sync` | THREAD_LIST_SYNC |
+| `:on-thread-member-update` | THREAD_MEMBER_UPDATE |
+| `:on-thread-members-update` | THREAD_MEMBERS_UPDATE |
+| `:on-guild-create` | GUILD_CREATE |
+| `:on-guild-update` | GUILD_UPDATE |
+| `:on-guild-delete` | GUILD_DELETE |
+| `:on-guild-member-add` | GUILD_MEMBER_ADD |
 | `:on-guild-member-update` | GUILD_MEMBER_UPDATE |
 | `:on-guild-member-remove` | GUILD_MEMBER_REMOVE |
+| `:on-guild-role-create` | GUILD_ROLE_CREATE |
+| `:on-guild-role-update` | GUILD_ROLE_UPDATE |
 | `:on-guild-role-delete` | GUILD_ROLE_DELETE |
 | `:on-voice-state-update` | VOICE_STATE_UPDATE |
 | `:on-interaction-create` | INTERACTION_CREATE |
 
 The gateway handles reconnection and session resumption automatically. A watchdog forces a reconnect if no traffic arrives from Discord for 90 seconds.
+
+### Setting the bot's presence
+
+```clojure
+(bot/update-presence {:status "online"
+                      :activities [{:name "with Clojure" :type 0}]})
+```
+
+Activity types: `0` playing, `1` streaming, `2` listening, `3` watching, `4` custom, `5` competing.
+
+### Multi-guild state
+
+`server-state` is a map of `guild-id -> guild-state`, populated as `GUILD_CREATE` events arrive. `get-presences` and `get-user-by-id` accept an optional `guild-id`; when omitted they assume the single-guild case (or search across guilds for `get-user-by-id`).
 
 ### Integrant
 

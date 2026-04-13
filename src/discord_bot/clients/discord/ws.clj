@@ -19,7 +19,7 @@
    :intents           intents
    :ws-conn           (atom nil)
    :session           (atom nil)
-   :server-state      (atom nil)
+   :server-state      (atom {})
    :heartbeat-timer   (atom nil)
    :heartbeat-semafor (atom 0)
    :reconnect-intent  (atom :auto)
@@ -40,23 +40,53 @@
   (log/info "SENDING WS PAYLOAD: " (cond-> payload (get-in payload [:d :token]) (assoc-in [:d :token] "REDACTED")))
   (ws/send-msg @(:ws-conn conn) (json/generate-string payload)))
 
-(defn get-presences
-  "Returns the presences for the connected guild as a vector of presence maps.
-  Returns nil if no guild data has been received yet."
+(defn- only-guild
+  "When the bot is connected to a single guild, returns its state map. When
+  connected to none or many, returns nil — callers should pass guild-id."
   [conn]
-  (:presences @(:server-state conn)))
+  (let [guilds (vals @(:server-state conn))]
+    (when (= 1 (count guilds)) (first guilds))))
+
+(defn get-presences
+  "Returns the presences for a guild as a vector of presence maps. With no
+  guild-id, works only if the bot is connected to exactly one guild. Returns
+  nil if the guild is unknown or the bot is in multiple guilds and guild-id
+  was not supplied."
+  ([conn]
+   (:presences (only-guild conn)))
+  ([conn guild-id]
+   (get-in @(:server-state conn) [guild-id :presences])))
 
 (defn get-user-by-id
-  "Looks up a guild member by their user ID."
-  [conn user-id]
-  (some
-   (fn [member] (when (= (:id (:user member)) user-id) member))
-   (:members @(:server-state conn))))
+  "Looks up a guild member by their user ID across all known guilds. Returns
+  the first match. Pass guild-id to restrict the search to a single guild."
+  ([conn user-id]
+   (some (fn [guild]
+           (some (fn [member] (when (= (:id (:user member)) user-id) member))
+                 (:members guild)))
+         (vals @(:server-state conn))))
+  ([conn guild-id user-id]
+   (some (fn [member] (when (= (:id (:user member)) user-id) member))
+         (get-in @(:server-state conn) [guild-id :members]))))
 
 (defn started-new-game?
   "Returns true if the game changed between two presence activity entries."
   [current-game new-game]
   (not= (:name current-game) (:name new-game)))
+
+(defn update-presence
+  "Sends an Update Presence (op 3) gateway command. presence is a map with keys
+  :since, :activities, :status, :afk — Discord requires all four, so nil fields
+  are filled in with sensible defaults (status \"online\", afk false, activities
+  []). activities is a vector of activity maps, e.g.
+    [{:name \"with Clojure\" :type 0}]
+  Type codes: 0 playing, 1 streaming, 2 listening, 3 watching, 4 custom, 5 competing."
+  [conn {:keys [since activities status afk] :as _presence}]
+  (ws-send conn {:op 3
+                 :d  {:since      since
+                      :activities (or activities [])
+                      :status     (or status "online")
+                      :afk        (boolean afk)}}))
 
 (defn build-identify-payload
   [conn]
@@ -150,15 +180,15 @@
   [conn data]
   (when-let [cb (get-in conn [:handlers :on-presence-update])]
     (cb conn data))
-  (let [user-id (get-in data [:user :id])]
-    (swap!
-     (:server-state conn)
-     (fn [s]
-       (update s :presences
-               (fn [presences]
-                 (mapv (fn [p]
-                         (if (= user-id (get-in p [:user :id])) data p))
-                       presences)))))))
+  (let [user-id  (get-in data [:user :id])
+        guild-id (:guild_id data)]
+    (when guild-id
+      (swap!
+       (:server-state conn)
+       update-in [guild-id :presences]
+       (fn [presences]
+         (mapv (fn [p] (if (= user-id (get-in p [:user :id])) data p))
+               (or presences [])))))))
 
 (defn- dispatch-handler
   [conn handler-key data]
@@ -167,13 +197,16 @@
 
 (defn handle-channel-create
   [conn data]
-  (swap! (:server-state conn) update :channels conj data)
+  (when-let [guild-id (:guild_id data)]
+    (swap! (:server-state conn) update-in [guild-id :channels]
+           (fn [cs] (conj (or cs []) data))))
   (dispatch-handler conn :on-channel-create data))
 
 (defn handle-channel-delete
   [conn data]
-  (swap! (:server-state conn) update :channels
-         (fn [cs] (filterv #(not= (:id %) (:id data)) cs)))
+  (when-let [guild-id (:guild_id data)]
+    (swap! (:server-state conn) update-in [guild-id :channels]
+           (fn [cs] (filterv #(not= (:id %) (:id data)) (or cs [])))))
   (dispatch-handler conn :on-channel-delete data))
 
 (defn handle-session-resumed [data]
@@ -185,19 +218,41 @@
   (case event-name
     "READY"                (reset! (:session conn) data)
     "RESUMED"              (handle-session-resumed data)
-    "GUILD_CREATE"         (reset! (:server-state conn) data)
-    "MESSAGE_CREATE"       (dispatch-handler conn :on-message-create data)
-    "MESSAGE_UPDATE"       (dispatch-handler conn :on-message-update data)
-    "PRESENCE_UPDATE"      (handle-presence-update conn data)
-    "TYPING_START"         (dispatch-handler conn :on-typing-start data)
-    "CHANNEL_CREATE"       (handle-channel-create conn data)
-    "CHANNEL_DELETE"       (handle-channel-delete conn data)
-    "GUILD_MEMBER_UPDATE"  (dispatch-handler conn :on-guild-member-update data)
-    "GUILD_MEMBER_REMOVE"  (dispatch-handler conn :on-guild-member-remove data)
-    "GUILD_ROLE_DELETE"    (dispatch-handler conn :on-guild-role-delete data)
-    "VOICE_STATE_UPDATE"   (dispatch-handler conn :on-voice-state-update data)
-    "MESSAGE_REACTION_ADD" (dispatch-handler conn :on-message-reaction-add data)
-    "INTERACTION_CREATE"   (dispatch-handler conn :on-interaction-create data)
+    "GUILD_CREATE"         (do (swap! (:server-state conn) assoc (:id data) data)
+                               (dispatch-handler conn :on-guild-create data))
+    "GUILD_UPDATE"         (do (swap! (:server-state conn)
+                                      (fn [s] (update s (:id data) merge data)))
+                               (dispatch-handler conn :on-guild-update data))
+    "GUILD_DELETE"         (do (swap! (:server-state conn) dissoc (:id data))
+                               (dispatch-handler conn :on-guild-delete data))
+    "MESSAGE_CREATE"                    (dispatch-handler conn :on-message-create data)
+    "MESSAGE_UPDATE"                    (dispatch-handler conn :on-message-update data)
+    "MESSAGE_DELETE"                    (dispatch-handler conn :on-message-delete data)
+    "MESSAGE_DELETE_BULK"               (dispatch-handler conn :on-message-delete-bulk data)
+    "PRESENCE_UPDATE"                   (handle-presence-update conn data)
+    "TYPING_START"                      (dispatch-handler conn :on-typing-start data)
+    "CHANNEL_CREATE"                    (handle-channel-create conn data)
+    "CHANNEL_UPDATE"                    (dispatch-handler conn :on-channel-update data)
+    "CHANNEL_DELETE"                    (handle-channel-delete conn data)
+    "CHANNEL_PINS_UPDATE"               (dispatch-handler conn :on-channel-pins-update data)
+    "THREAD_CREATE"                     (dispatch-handler conn :on-thread-create data)
+    "THREAD_UPDATE"                     (dispatch-handler conn :on-thread-update data)
+    "THREAD_DELETE"                     (dispatch-handler conn :on-thread-delete data)
+    "THREAD_LIST_SYNC"                  (dispatch-handler conn :on-thread-list-sync data)
+    "THREAD_MEMBER_UPDATE"              (dispatch-handler conn :on-thread-member-update data)
+    "THREAD_MEMBERS_UPDATE"             (dispatch-handler conn :on-thread-members-update data)
+    "GUILD_MEMBER_ADD"                  (dispatch-handler conn :on-guild-member-add data)
+    "GUILD_MEMBER_UPDATE"               (dispatch-handler conn :on-guild-member-update data)
+    "GUILD_MEMBER_REMOVE"               (dispatch-handler conn :on-guild-member-remove data)
+    "GUILD_ROLE_CREATE"                 (dispatch-handler conn :on-guild-role-create data)
+    "GUILD_ROLE_UPDATE"                 (dispatch-handler conn :on-guild-role-update data)
+    "GUILD_ROLE_DELETE"                 (dispatch-handler conn :on-guild-role-delete data)
+    "VOICE_STATE_UPDATE"                (dispatch-handler conn :on-voice-state-update data)
+    "MESSAGE_REACTION_ADD"              (dispatch-handler conn :on-message-reaction-add data)
+    "MESSAGE_REACTION_REMOVE"           (dispatch-handler conn :on-message-reaction-remove data)
+    "MESSAGE_REACTION_REMOVE_ALL"       (dispatch-handler conn :on-message-reaction-remove-all data)
+    "MESSAGE_REACTION_REMOVE_EMOJI"     (dispatch-handler conn :on-message-reaction-remove-emoji data)
+    "INTERACTION_CREATE"                (dispatch-handler conn :on-interaction-create data)
     (log/warn "Received an unknown event name" event-name ". Full event data:" data))
   (when event-index
     (swap! (:session conn)
@@ -310,9 +365,13 @@
   "Gracefully disconnects from Discord without triggering auto-reconnect.
   Cancels the watchdog. Returns nil."
   [conn]
+  ;; Set the intent under the lock so on-close (which also takes the lock)
+  ;; sees :stop when it fires. Do NOT hold the lock while closing — on-close
+  ;; needs to acquire it on a different thread, and Jetty's .stop can block
+  ;; waiting for on-close to return. Holding the lock here would deadlock.
   (with-lifecycle-lock conn
-    (reset! (:reconnect-intent conn) :stop)
-    (close-connection conn)
-    (when-let [wd @(:watchdog-timer conn)]
-      (future-cancel wd)
-      (reset! (:watchdog-timer conn) nil))))
+    (reset! (:reconnect-intent conn) :stop))
+  (when-let [wd @(:watchdog-timer conn)]
+    (future-cancel wd)
+    (reset! (:watchdog-timer conn) nil))
+  (close-connection conn))

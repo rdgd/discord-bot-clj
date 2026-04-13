@@ -83,6 +83,51 @@
                          :path   (str "channels/" channel-id "/threads")
                          :body   params}))
 
+(defn join-thread [conn channel-id]
+  (api/api-request conn {:method :put
+                         :path   (str "channels/" channel-id "/thread-members/@me")}))
+
+(defn leave-thread [conn channel-id]
+  (api/api-request conn {:method :delete
+                         :path   (str "channels/" channel-id "/thread-members/@me")}))
+
+(defn add-thread-member [conn channel-id user-id]
+  (api/api-request conn {:method :put
+                         :path   (str "channels/" channel-id "/thread-members/" user-id)}))
+
+(defn remove-thread-member [conn channel-id user-id]
+  (api/api-request conn {:method :delete
+                         :path   (str "channels/" channel-id "/thread-members/" user-id)}))
+
+(defn get-thread-member [conn channel-id user-id & [query-params]]
+  (api/api-request conn {:method       :get
+                         :path         (str "channels/" channel-id "/thread-members/" user-id)
+                         :query-params query-params}))
+
+(defn list-thread-members [conn channel-id & [query-params]]
+  (api/api-request conn {:method       :get
+                         :path         (str "channels/" channel-id "/thread-members")
+                         :query-params query-params}))
+
+(defn list-active-guild-threads [conn guild-id]
+  (api/api-request conn {:method :get
+                         :path   (str "guilds/" guild-id "/threads/active")}))
+
+(defn list-public-archived-threads [conn channel-id & [query-params]]
+  (api/api-request conn {:method       :get
+                         :path         (str "channels/" channel-id "/threads/archived/public")
+                         :query-params query-params}))
+
+(defn list-private-archived-threads [conn channel-id & [query-params]]
+  (api/api-request conn {:method       :get
+                         :path         (str "channels/" channel-id "/threads/archived/private")
+                         :query-params query-params}))
+
+(defn list-joined-private-archived-threads [conn channel-id & [query-params]]
+  (api/api-request conn {:method       :get
+                         :path         (str "channels/" channel-id "/users/@me/threads/archived/private")
+                         :query-params query-params}))
+
 ; Reactions
 (defn create-reaction [conn channel-id message-id emoji]
   (api/api-request conn {:method :put

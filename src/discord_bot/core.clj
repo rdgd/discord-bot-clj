@@ -73,13 +73,8 @@
     :handlers - map of event callbacks. Each callback is (fn [data]). Inside
                 a handler, `*conn*` is bound so API calls can omit conn.
                 If you need the connection explicitly (e.g. to pass to a
-                future), deref `discord-bot.core/*conn*`. Supported keys:
-                  :on-message-create        :on-message-update
-                  :on-presence-update       :on-typing-start
-                  :on-channel-create        :on-channel-delete
-                  :on-voice-state-update    :on-message-reaction-add
-                  :on-guild-member-update   :on-guild-member-remove
-                  :on-guild-role-delete     :on-interaction-create
+                future), deref `discord-bot.core/*conn*`. See the README for
+                the full list of supported handler keys.
     :intents  - integer bitfield for gateway intents"
   [opts]
   (ws/new-connection (-> opts
@@ -101,12 +96,9 @@
   (let [hook (Thread.
               ^Runnable
               (fn []
-                (try (ws/stop! conn)
-                     (catch Throwable t
-                       (.println System/err (str "shutdown error: " t))))
-                ;; Daemon timer. Doesn't prevent clean exit on its own, but
-                ;; if non-daemon threads linger past the grace period we
-                ;; halt the JVM so the process always terminates.
+                ;; Start the halt timer FIRST. If ws/stop! hangs (e.g. Jetty
+                ;; teardown deadlock), this still ensures the JVM exits.
+                ;; Daemon so it never blocks a clean exit on its own.
                 (doto (Thread.
                        ^Runnable
                        (fn []
@@ -114,7 +106,10 @@
                          (.halt (Runtime/getRuntime) 0))
                        "discord-bot-force-halt")
                   (.setDaemon true)
-                  (.start)))
+                  (.start))
+                (try (ws/stop! conn)
+                     (catch Throwable t
+                       (.println System/err (str "shutdown error: " t)))))
               "discord-bot-shutdown")]
     (.addShutdownHook (Runtime/getRuntime) hook)
     hook))
@@ -146,18 +141,26 @@
 ; WebSocket state
 
 (defn get-presences
-  "Returns the presences for the connected guild as a vector of presence maps,
-  each containing :user, :status, :activities, etc. Returns nil if no guild
-  data has been received yet."
-  ([] (get-presences (current-conn)))
-  ([conn] (ws/get-presences conn)))
+  "Returns presences for a guild as a vector of presence maps, each containing
+  :user, :status, :activities, etc. With no guild-id, works only if the bot
+  is connected to exactly one guild. Returns nil if the guild is unknown."
+  ([] (ws/get-presences (current-conn)))
+  ([guild-id-or-conn]
+   (if (map? guild-id-or-conn)
+     (ws/get-presences guild-id-or-conn)
+     (ws/get-presences (current-conn) guild-id-or-conn)))
+  ([conn guild-id] (ws/get-presences conn guild-id)))
 
 (defn get-user-by-id
   "Looks up a guild member by their user ID. user-id is a string snowflake.
-  Returns the member map (containing :user, :roles, :nick, etc.) or nil if
-  not found."
-  ([user-id] (get-user-by-id (current-conn) user-id))
-  ([conn user-id] (ws/get-user-by-id conn user-id)))
+  Searches across all known guilds when guild-id is omitted, returning the
+  first match. Returns the member map (:user, :roles, :nick, ...) or nil."
+  ([user-id] (ws/get-user-by-id (current-conn) user-id))
+  ([conn-or-guild-id user-id]
+   (if (map? conn-or-guild-id)
+     (ws/get-user-by-id conn-or-guild-id user-id)
+     (ws/get-user-by-id (current-conn) conn-or-guild-id user-id)))
+  ([conn guild-id user-id] (ws/get-user-by-id conn guild-id user-id)))
 
 (defn started-new-game?
   "Returns true if the game changed between two presence activity entries.
@@ -166,10 +169,26 @@
   (ws/started-new-game? current-game new-game))
 
 (defn server-state
-  "Returns the current guild state map (containing :members, :channels,
-  :presences, etc) or nil if no GUILD_CREATE has been received yet."
+  "Returns a map of guild-id -> guild-state, where each guild-state contains
+  :members, :channels, :presences, etc. Pass a guild-id to fetch a single
+  guild's state directly. Empty until the first GUILD_CREATE."
   ([] (server-state (current-conn)))
-  ([conn] @(:server-state conn)))
+  ([guild-id-or-conn]
+   (if (map? guild-id-or-conn)
+     @(:server-state guild-id-or-conn)
+     (get @(:server-state (current-conn)) guild-id-or-conn)))
+  ([conn guild-id] (get @(:server-state conn) guild-id)))
+
+(defn update-presence
+  "Sets the bot's presence. presence is a map:
+    {:status     \"online\" | \"idle\" | \"dnd\" | \"invisible\"
+     :activities [{:name \"foo\" :type 0} ...]
+     :afk        false
+     :since      nil}
+  Only :status and :activities are usually needed; the rest default sensibly.
+  Requires an open gateway connection."
+  ([presence] (update-presence (current-conn) presence))
+  ([conn presence] (ws/update-presence conn presence)))
 
 ; Channels
 
@@ -271,6 +290,70 @@
   :auto_archive_duration, :invitable. Returns the created thread map."
   ([channel-id params] (start-thread-in-channel (current-conn) channel-id params))
   ([conn channel-id params] (http/start-thread-in-channel conn channel-id params)))
+
+(defn join-thread
+  "Adds the bot to a thread. channel-id is the thread's id. Returns :ok."
+  ([channel-id] (join-thread (current-conn) channel-id))
+  ([conn channel-id] (http/join-thread conn channel-id)))
+
+(defn leave-thread
+  "Removes the bot from a thread. channel-id is the thread's id. Returns :ok."
+  ([channel-id] (leave-thread (current-conn) channel-id))
+  ([conn channel-id] (http/leave-thread conn channel-id)))
+
+(defn add-thread-member
+  "Adds another member to a thread. channel-id is the thread's id, user-id a
+  string snowflake. Returns :ok."
+  ([channel-id user-id] (add-thread-member (current-conn) channel-id user-id))
+  ([conn channel-id user-id] (http/add-thread-member conn channel-id user-id)))
+
+(defn remove-thread-member
+  "Removes a member from a thread. channel-id is the thread's id, user-id a
+  string snowflake. Returns :ok."
+  ([channel-id user-id] (remove-thread-member (current-conn) channel-id user-id))
+  ([conn channel-id user-id] (http/remove-thread-member conn channel-id user-id)))
+
+(defn get-thread-member
+  "Fetches a thread member. query-params may include {:with_member true} to
+  include member data. Returns a thread-member map."
+  ([channel-id user-id] (get-thread-member (current-conn) channel-id user-id nil))
+  ([channel-id user-id query-params] (get-thread-member (current-conn) channel-id user-id query-params))
+  ([conn channel-id user-id query-params] (http/get-thread-member conn channel-id user-id query-params)))
+
+(defn list-thread-members
+  "Lists the members of a thread. query-params may include {:with_member true
+  :limit 100 :after user-id} for pagination. Returns a vector of thread-member
+  maps. Requires the GUILD_MEMBERS intent."
+  ([channel-id] (list-thread-members (current-conn) channel-id nil))
+  ([channel-id query-params] (list-thread-members (current-conn) channel-id query-params))
+  ([conn channel-id query-params] (http/list-thread-members conn channel-id query-params)))
+
+(defn list-active-guild-threads
+  "Lists all active threads in a guild the bot can view. Returns a map with
+  :threads and :members."
+  ([guild-id] (list-active-guild-threads (current-conn) guild-id))
+  ([conn guild-id] (http/list-active-guild-threads conn guild-id)))
+
+(defn list-public-archived-threads
+  "Lists archived public threads in a channel. query-params may include
+  {:before iso8601 :limit 50}. Returns a map with :threads, :members, :has_more."
+  ([channel-id] (list-public-archived-threads (current-conn) channel-id nil))
+  ([channel-id query-params] (list-public-archived-threads (current-conn) channel-id query-params))
+  ([conn channel-id query-params] (http/list-public-archived-threads conn channel-id query-params)))
+
+(defn list-private-archived-threads
+  "Lists archived private threads in a channel. query-params may include
+  {:before iso8601 :limit 50}. Returns a map with :threads, :members, :has_more."
+  ([channel-id] (list-private-archived-threads (current-conn) channel-id nil))
+  ([channel-id query-params] (list-private-archived-threads (current-conn) channel-id query-params))
+  ([conn channel-id query-params] (http/list-private-archived-threads conn channel-id query-params)))
+
+(defn list-joined-private-archived-threads
+  "Lists archived private threads the bot has joined. query-params may include
+  {:before snowflake :limit 50}. Returns a map with :threads, :members, :has_more."
+  ([channel-id] (list-joined-private-archived-threads (current-conn) channel-id nil))
+  ([channel-id query-params] (list-joined-private-archived-threads (current-conn) channel-id query-params))
+  ([conn channel-id query-params] (http/list-joined-private-archived-threads conn channel-id query-params)))
 
 ; Reactions
 
