@@ -229,6 +229,26 @@
   ([channel-id message-ids] (bulk-delete-messages (current-conn) channel-id message-ids))
   ([conn channel-id message-ids] (http/bulk-delete-messages conn channel-id message-ids)))
 
+; Threads
+
+(defn start-thread-from-message
+  "Creates a thread branched off an existing message. channel-id and message-id
+  are string snowflakes. params is a map with at minimum {:name \"thread-name\"}
+  and optionally :auto_archive_duration, :rate_limit_per_user. Returns the
+  created channel (thread) map. Send messages into the thread by passing its
+  :id to send-channel-message."
+  ([channel-id message-id params]
+   (start-thread-from-message (current-conn) channel-id message-id params))
+  ([conn channel-id message-id params]
+   (http/start-thread-from-message conn channel-id message-id params)))
+
+(defn start-thread-in-channel
+  "Creates a thread in a channel without an anchor message. channel-id is a
+  string snowflake. params is a map with :name and optionally :type,
+  :auto_archive_duration, :invitable. Returns the created thread map."
+  ([channel-id params] (start-thread-in-channel (current-conn) channel-id params))
+  ([conn channel-id params] (http/start-thread-in-channel conn channel-id params)))
+
 ; Reactions
 
 (defn create-reaction

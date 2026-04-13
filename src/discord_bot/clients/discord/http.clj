@@ -72,6 +72,17 @@
                          :path   (str "channels/" channel-id "/messages/bulk-delete")
                          :body   {:messages message-ids}}))
 
+; Threads
+(defn start-thread-from-message [conn channel-id message-id params]
+  (api/api-request conn {:method :post
+                         :path   (str "channels/" channel-id "/messages/" message-id "/threads")
+                         :body   params}))
+
+(defn start-thread-in-channel [conn channel-id params]
+  (api/api-request conn {:method :post
+                         :path   (str "channels/" channel-id "/threads")
+                         :body   params}))
+
 ; Reactions
 (defn create-reaction [conn channel-id message-id emoji]
   (api/api-request conn {:method :put
